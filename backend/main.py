@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import city, report
+from dotenv import load_dotenv
+load_dotenv()  # Load .env before anything else
+
+from routes import city, report, copilot
 
 app = FastAPI(
     title="SatEye API", 
@@ -21,6 +24,7 @@ app.add_middleware(
 # Attach routes
 app.include_router(city.router)
 app.include_router(report.router)
+app.include_router(copilot.router)
 
 @app.get("/")
 def health_check():
