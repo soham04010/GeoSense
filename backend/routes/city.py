@@ -4,8 +4,8 @@ import json
 
 router = APIRouter()
 
-@router.get("/api/city/{city}/heatmap")
-def get_heatmap(city: str):
+@router.get("/api/city/{city_name}/heatmap")
+def get_heatmap(city_name: str):
     """Returns ward boundaries and the latest temperature for the map."""
     conn = get_db_connection()
     if not conn:
@@ -13,7 +13,9 @@ def get_heatmap(city: str):
     
     try:
         cursor = conn.cursor()
-        # Grab the ward shape (as GeoJSON) and the latest LST reading
+        
+        # FIXED: Added city_name filter and moved the date check to the ON clause
+        # so wards without data still load their map polygons properly.
         query = """
             SELECT 
                 w.ward_id,
@@ -21,10 +23,14 @@ def get_heatmap(city: str):
                 o.lst_celsius,
                 ST_AsGeoJSON(w.geom)::json AS geometry
             FROM wards w
-            LEFT JOIN lst_observations o ON w.ward_id = o.ward_id
-            WHERE o.date = (SELECT MAX(date) FROM lst_observations)
+            LEFT JOIN lst_observations o 
+                ON w.ward_id = o.ward_id 
+                AND o.date = (SELECT MAX(date) FROM lst_observations)
+            WHERE w.city_name ILIKE %(city_name)s
         """
-        cursor.execute(query)
+        
+        # Safely pass the city_name from the URL into the SQL query
+        cursor.execute(query, {"city_name": city_name})
         rows = cursor.fetchall()
 
         # Format perfectly for React-Leaflet
@@ -49,8 +55,9 @@ def get_heatmap(city: str):
             cursor.close()
             conn.close()
 
-@router.get("/api/city/{city}/anomalies")
-def get_anomalies(city: str):
+
+@router.get("/api/city/{city_name}/anomalies")
+def get_anomalies(city_name: str):
     """Returns the latest ML-detected anomalies for the alert cards."""
     conn = get_db_connection()
     if not conn:
@@ -58,15 +65,20 @@ def get_anomalies(city: str):
         
     try:
         cursor = conn.cursor()
+        
+        # FIXED: Now strictly filters anomalies for the city requested by the frontend
         query = """
             SELECT a.parameter, a.severity, a.reason, w.ward_name, a.detected_at
             FROM anomalies a
             JOIN wards w ON a.ward_id = w.ward_id
+            WHERE w.city_name ILIKE %(city_name)s
             ORDER BY a.detected_at DESC
             LIMIT 10
         """
-        cursor.execute(query)
+        
+        cursor.execute(query, {"city_name": city_name})
         return cursor.fetchall() # RealDictCursor makes this instantly JSON ready
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
