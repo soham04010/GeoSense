@@ -1,83 +1,200 @@
 // frontend/app/dashboard/page.tsx
 "use client";
 
-import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
-import { fetchHeatmap, fetchAnomalies } from "@/lib/api";
+import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap } from "@/lib/api";
+import { CitySummary, CityTrends, CityAnomalies, CityHeatmap } from "@/types";
+
+import StatBar from "@/components/StatBar";
+import AlertCard from "@/components/AlertCard";
 import ReportDownload from "@/components/ReportDownload";
 
-// Dynamically import the Leaflet map (using the Map.tsx code from my previous message)
-const DynamicMap = dynamic(() => import("@/components/Map"), { ssr: false });
+// Dynamically import client-side components
+const DynamicMap = dynamic(() => import("@/components/Map"), { 
+  ssr: false,
+  loading: () => <div className="h-[500px] flex items-center justify-center bg-slate-900/50 rounded-2xl border border-slate-800 animate-pulse text-slate-500 uppercase font-black text-xs tracking-widest">Initializing Geospatial Engine...</div>
+});
 
-export default function Dashboard() {
+const DynamicWardChart = dynamic(() => import("@/components/WardChart"), { 
+  ssr: false,
+  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-900/50 rounded-2xl border border-slate-800 animate-pulse text-slate-500 uppercase font-black text-xs tracking-widest">Synthesizing Climate Trends...</div>
+});
+
+function DashboardContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const city = searchParams.get("city") || "Ahmedabad";
 
-  const [mapData, setMapData] = useState(null);
-  const [anomalies, setAnomalies] = useState<any[]>([]);
+  const [summary, setSummary] = useState<CitySummary | null>(null);
+  const [trends, setTrends] = useState<CityTrends | null>(null);
+  const [anomalies, setAnomalies] = useState<CityAnomalies | null>(null);
+  const [heatmap, setHeatmap] = useState<CityHeatmap | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentLayer, setCurrentLayer] = useState<'lst' | 'ndvi' | 'pm25'>('lst');
+  const [searchQuery, setSearchQuery] = useState(city);
+
+  const handleSearch = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && searchQuery.trim()) {
+      router.push(`/dashboard?city=${searchQuery.trim()}`);
+    }
+  };
 
   useEffect(() => {
-    // Fetch both datasets simultaneously when the page loads
-    Promise.all([fetchHeatmap(city), fetchAnomalies(city)])
-      .then(([heatmapRes, anomaliesRes]) => {
-        setMapData(heatmapRes);
-        setAnomalies(anomaliesRes);
-      })
-      .catch((err) => console.error("Error fetching data", err))
-      .finally(() => setLoading(false));
+    // Parallel fetch for all dashboard data
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const [sumRes, trendRes, anomRes, heatRes] = await Promise.all([
+          getCitySummary(city),
+          getCityTrends(city),
+          getCityAnomalies(city),
+          getCityHeatmap(city)
+        ]);
+        
+        setSummary(sumRes);
+        setTrends(trendRes);
+        setAnomalies(anomRes);
+        setHeatmap(heatRes);
+      } catch (err) {
+        console.error("Error fetching dashboard data", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [city]);
+
+  useEffect(() => {
+    setSearchQuery(city);
   }, [city]);
 
   if (loading) {
-    return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white text-2xl font-bold">Loading Satellite Data for {city}...</div>;
+    return (
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white space-y-6">
+        <div className="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
+        <div className="text-center">
+          <h2 className="text-2xl font-black tracking-tight">Synchronizing Satellite Data</h2>
+          <p className="text-slate-500 font-mono text-sm mt-2 uppercase">Connecting to GEE Archive for {city}...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6">
-      {/* Top Header */}
-      <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-4xl font-bold text-emerald-400">SatEye Dashboard</h1>
-          <p className="text-slate-400 text-lg">Monitoring: <span className="font-semibold text-white">{city}</span></p>
-        </div>
-        <ReportDownload city={city} />
+    <div className="min-h-screen bg-[#020617] text-slate-200 font-sans selection:bg-emerald-500/30 selection:text-emerald-400">
+      <div className="fixed inset-0 pointer-events-none z-0 opacity-20">
+        <div className="absolute top-0 left-1/4 w-[50%] h-[50%] bg-emerald-500/10 blur-[150px] rounded-full"></div>
+        <div className="absolute bottom-0 right-1/4 w-[50%] h-[50%] bg-blue-500/10 blur-[150px] rounded-full"></div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: The Map (Takes up 2/3 of the screen) */}
-        <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-xl font-bold">Live Urban Heat Island Map (LST)</h2>
-          <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-800 shadow-xl">
-            <DynamicMap geoJsonData={mapData} />
+      <div className="relative z-10 p-6 lg:p-10 max-w-[1600px] mx-auto space-y-10">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <div className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-black tracking-tighter uppercase">LIVE SAT-TELEMETRY</div>
+              <h1 className="text-3xl font-black text-white tracking-tight leading-none italic uppercase">
+                {city} <span className="text-emerald-500 not-italic">Intelligence Engine</span>
+              </h1>
+            </div>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.3em] mt-3 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Real-time MODIS / Sentinel-5P Cloud Synthesis
+            </p>
+            <div className="relative mt-4">
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearch}
+                placeholder="Analyze Global City (e.g. Paris, Tokyo)..."
+                className="bg-slate-900/60 backdrop-blur-md border border-white/5 text-slate-300 text-[10px] font-bold uppercase tracking-widest px-5 py-3 rounded-full w-80 focus:outline-none focus:border-emerald-500/50 transition-all shadow-2xl"
+              />
+              <div className="absolute right-4 top-3.5 text-[8px] text-slate-600 font-black">⏎ ENTER</div>
+            </div>
           </div>
-        </div>
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <button 
+              onClick={() => window.open(`http://localhost:8001/api/city/${city}/map`, '_blank')}
+              className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black text-[10px] uppercase tracking-widest rounded-full border border-slate-700 transition-all active:scale-95 flex items-center gap-2"
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
+              View Analytical Map (Folium)
+            </button>
+            <ReportDownload city={city} />
+          </div>
+        </header>
 
-        {/* Right Column: ML Anomalies */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-bold text-red-400">⚠️ ML Anomaly Alerts</h2>
-          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-            {anomalies.length === 0 ? (
-              <p className="text-slate-400 p-4 bg-slate-900 rounded-lg text-center">No anomalies detected.</p>
-            ) : (
-              anomalies.map((anomaly, idx) => (
-                <div key={idx} className="bg-slate-900 border-l-4 border-red-500 p-4 rounded-r-lg shadow-md">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="font-bold text-lg">{anomaly.ward_name}</span>
-                    <span className="bg-red-500/20 text-red-400 text-xs px-2 py-1 rounded font-bold">
-                      {anomaly.severity}
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-300">
-                    <span className="font-semibold text-white">{anomaly.parameter}:</span> {anomaly.reason}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-2">Detected: {anomaly.detected_at}</p>
-                </div>
-              ))
+        <section className="animate-fade-in-up">
+          <StatBar data={summary} />
+        </section>
+
+        <section className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+          <div className="xl:col-span-7 space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Jurisdictional Geo-Engine <span className="text-emerald-500/50 ml-1">({currentLayer.toUpperCase()})</span></h2>
+              <div className="flex gap-2">
+                {(['lst', 'ndvi', 'pm25'] as const).map((l) => (
+                  <button 
+                    key={l}
+                    onClick={() => setCurrentLayer(l)}
+                    className={`px-3 py-1 text-[10px] font-black rounded-full transition-all border ${currentLayer === l ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/20' : 'bg-slate-900 border-slate-800 text-slate-500 hover:bg-slate-800'}`}
+                  >
+                    {l.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="bg-slate-900/50 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl relative">
+               <DynamicMap geoData={heatmap} activeLayer={currentLayer} />
+            </div>
+          </div>
+
+          <div className="xl:col-span-5 space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Long-term Climate Synthesis</h2>
+              <span className="text-[10px] font-bold text-slate-600 uppercase">Predictive Analysis Enabled</span>
+            </div>
+            <DynamicWardChart data={trends} />
+          </div>
+        </section>
+
+        <section className="space-y-6">
+          <div className="flex items-center gap-4 px-2">
+            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">ML Risk Assessment & Alerts</h2>
+            <div className="h-px flex-grow bg-white/5"></div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {anomalies?.alerts.map((alert, idx) => (
+              <AlertCard key={idx} alert={alert} />
+            ))}
+            {(!anomalies || anomalies.alerts.length === 0) && (
+              <div className="col-span-full py-12 text-center bg-slate-900/40 rounded-3xl border border-slate-800 border-dashed">
+                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No Critical Risks Detected Today</p>
+              </div>
             )}
           </div>
-        </div>
+        </section>
+
+        <footer className="pt-10 border-t border-white/5 flex flex-col md:flex-row justify-between items-center text-slate-600 text-[10px] font-bold uppercase tracking-widest gap-4">
+          <p>© 2026 SatEye Platform — Powered by ISRO & GEE Archives</p>
+          <div className="flex gap-6">
+            <a href="#" className="hover:text-emerald-500 transition-colors">API Docs</a>
+            <a href="#" className="hover:text-emerald-500 transition-colors">Methodology</a>
+            <a href="#" className="hover:text-emerald-500 transition-colors">Contact Support</a>
+          </div>
+        </footer>
       </div>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#020617] flex items-center justify-center text-emerald-500 font-black tracking-widest text-xl animate-pulse uppercase">Initializing Geo-Satellite Engine...</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }

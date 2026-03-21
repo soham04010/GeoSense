@@ -1,25 +1,30 @@
-// frontend/lib/api.ts
 import axios from 'axios';
 
-// Point this to your FastAPI server
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-});
-
-export const fetchHeatmap = async (city: string) => {
-  const response = await apiClient.get(`/city/${city}/heatmap`);
+export const getCitySummary = async (city: string) => {
+  const response = await axios.get(`${API_URL}/api/city/${city}/summary`);
   return response.data;
 };
 
-export const fetchAnomalies = async (city: string) => {
-  const response = await apiClient.get(`/city/${city}/anomalies`);
+export const getCityTrends = async (city: string) => {
+  const response = await axios.get(`${API_URL}/api/city/${city}/trends`);
   return response.data;
 };
 
-export const downloadActionPlan = async (city: string) => {
-  // We use responseType: 'blob' because we are downloading a PDF file, not JSON
-  const response = await apiClient.post(`/report/generate/${city}`, {}, { responseType: 'blob' });
+export const getCityAnomalies = async (city: string) => {
+  const response = await axios.get(`${API_URL}/api/city/${city}/anomalies`);
+  return response.data;
+};
+
+export const getCityHeatmap = async (city: string) => {
+  const response = await axios.get(`${API_URL}/api/city/${city}/heatmap`);
+  return response.data;
+};
+
+export const generateReport = async (city: string) => {
+  const response = await axios.post(`${API_URL}/api/report/generate?city=${city}`, {}, {
+    responseType: 'blob', // Important for PDF download
+  });
   return response.data;
 };
