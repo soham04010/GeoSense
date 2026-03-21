@@ -8,3 +8,4 @@ reportlab
 geopandas
 psycopg2-binary
 requests
+groq

@@ -33,3 +33,11 @@ export const generateReport = async (city: string) => {
   });
   return response.data;
 };
+
+export const askCopilot = async (city: string, message: string, context: object) => {
+  const response = await axios.post(`${API_URL}/api/city/${city}/copilot`, {
+    message,
+    context,
+  });
+  return response.data;
+};

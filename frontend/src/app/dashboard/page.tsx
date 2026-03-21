@@ -10,6 +10,7 @@ import { CitySummary, CityTrends, CityAnomalies, CityHeatmap } from "@/types";
 import StatBar from "@/components/StatBar";
 import AlertCard from "@/components/AlertCard";
 import ReportDownload from "@/components/ReportDownload";
+import AICopilot from "@/components/AICopilot";
 
 // Dynamically import client-side components
 const DynamicMap = dynamic(() => import("@/components/Map"), { 
@@ -183,6 +184,9 @@ function DashboardContent() {
           </div>
         </footer>
       </div>
+
+      {/* Floating AI Copilot */}
+      <AICopilot city={city} summary={summary} anomalies={anomalies} />
     </div>
   );
 }
