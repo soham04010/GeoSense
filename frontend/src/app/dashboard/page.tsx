@@ -4,7 +4,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
-import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap } from "@/lib/api";
+import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap, getAvailableCities } from "@/lib/api";
 import { CitySummary, CityTrends, CityAnomalies, CityHeatmap } from "@/types";
 
 import StatBar from "@/components/StatBar";
@@ -31,18 +31,23 @@ function DashboardContent() {
   const [trends, setTrends] = useState<CityTrends | null>(null);
   const [anomalies, setAnomalies] = useState<CityAnomalies | null>(null);
   const [heatmap, setHeatmap] = useState<CityHeatmap | null>(null);
+  const [availableCities, setAvailableCities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentLayer, setCurrentLayer] = useState<'lst' | 'ndvi' | 'pm25'>('lst');
-  const [searchQuery, setSearchQuery] = useState(city);
-
-  const handleSearch = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && searchQuery.trim()) {
-      router.push(`/dashboard?city=${searchQuery.trim()}`);
-    }
-  };
 
   useEffect(() => {
-    // Parallel fetch for all dashboard data
+    const fetchCities = async () => {
+      try {
+        const cities = await getAvailableCities();
+        setAvailableCities(cities);
+      } catch (err) {
+        console.error("Error fetching available cities", err);
+      }
+    };
+    fetchCities();
+  }, []);
+
+  useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
@@ -67,17 +72,19 @@ function DashboardContent() {
     fetchData();
   }, [city]);
 
-  useEffect(() => {
-    setSearchQuery(city);
-  }, [city]);
+  const handleCityChange = (newCity: string) => {
+    if (newCity) {
+      router.push(`/dashboard?city=${newCity}`);
+    }
+  };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white space-y-6">
         <div className="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
         <div className="text-center">
-          <h2 className="text-2xl font-black tracking-tight">Synchronizing Satellite Data</h2>
-          <p className="text-slate-500 font-mono text-sm mt-2 uppercase">Connecting to GEE Archive for {city}...</p>
+          <h2 className="text-2xl font-black tracking-tight uppercase italic text-emerald-500">Synchronizing Local Data</h2>
+          <p className="text-slate-500 font-mono text-sm mt-2 uppercase">Analyzing CSV Repositories for {city}...</p>
         </div>
       </div>
     );
@@ -94,25 +101,27 @@ function DashboardContent() {
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
-              <div className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-black tracking-tighter uppercase">LIVE SAT-TELEMETRY</div>
+              <div className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-black tracking-tighter uppercase">LOCAL DATA INTELLIGENCE</div>
               <h1 className="text-3xl font-black text-white tracking-tight leading-none italic uppercase">
-                {city} <span className="text-emerald-500 not-italic">Intelligence Engine</span>
+                {city} <span className="text-emerald-500 not-italic">Engine</span>
               </h1>
             </div>
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.3em] mt-3 flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Real-time MODIS / Sentinel-5P Cloud Synthesis
+              Synchronized with CPCB & Gujarat 2018 CSV Archives
             </p>
-            <div className="relative mt-4">
-              <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={handleSearch}
-                placeholder="Analyze Global City (e.g. Paris, Tokyo)..."
-                className="bg-slate-900/60 backdrop-blur-md border border-white/5 text-slate-300 text-[10px] font-bold uppercase tracking-widest px-5 py-3 rounded-full w-80 focus:outline-none focus:border-emerald-500/50 transition-all shadow-2xl"
-              />
-              <div className="absolute right-4 top-3.5 text-[8px] text-slate-600 font-black">⏎ ENTER</div>
+            <div className="relative mt-4 group">
+              <select 
+                value={city}
+                onChange={(e) => handleCityChange(e.target.value)}
+                className="bg-slate-900/80 backdrop-blur-xl border border-white/10 text-slate-200 text-[10px] font-black uppercase tracking-[0.2em] px-6 py-4 rounded-2xl w-full md:w-[400px] focus:outline-none focus:border-emerald-500/50 transition-all shadow-2xl appearance-none cursor-pointer hover:bg-slate-800"
+              >
+                <option value="" disabled>Search CSV-Available Cities...</option>
+                {availableCities.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <div className="absolute right-6 top-5 pointer-events-none text-emerald-500/40 text-[10px]">▼</div>
             </div>
           </div>
           <div className="flex items-center gap-4 w-full md:w-auto">
@@ -121,7 +130,7 @@ function DashboardContent() {
               className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black text-[10px] uppercase tracking-widest rounded-full border border-slate-700 transition-all active:scale-95 flex items-center gap-2"
             >
               <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
-              View Analytical Map (Folium)
+              View Static Heatmap (Folium)
             </button>
             <ReportDownload city={city} />
           </div>
@@ -134,7 +143,7 @@ function DashboardContent() {
         <section className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
           <div className="xl:col-span-7 space-y-4">
             <div className="flex items-center justify-between px-2">
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Jurisdictional Geo-Engine <span className="text-emerald-500/50 ml-1">({currentLayer.toUpperCase()})</span></h2>
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Jurisdictional Heatmap <span className="text-emerald-500/50 ml-1">({currentLayer.toUpperCase()})</span></h2>
               <div className="flex gap-2">
                 {(['lst', 'ndvi', 'pm25'] as const).map((l) => (
                   <button 
@@ -154,8 +163,8 @@ function DashboardContent() {
 
           <div className="xl:col-span-5 space-y-4">
             <div className="flex items-center justify-between px-2">
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Long-term Climate Synthesis</h2>
-              <span className="text-[10px] font-bold text-slate-600 uppercase">Predictive Analysis Enabled</span>
+              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Climate Trending</h2>
+              <span className="text-[10px] font-bold text-slate-600 uppercase italic">120-Year CSV Record</span>
             </div>
             <DynamicWardChart data={trends} />
           </div>
@@ -163,7 +172,7 @@ function DashboardContent() {
 
         <section className="space-y-6">
           <div className="flex items-center gap-4 px-2">
-            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">ML Risk Assessment & Alerts</h2>
+            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">CSV Anomaly Highlights</h2>
             <div className="h-px flex-grow bg-white/5"></div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -172,18 +181,18 @@ function DashboardContent() {
             ))}
             {(!anomalies || anomalies.alerts.length === 0) && (
               <div className="col-span-full py-12 text-center bg-slate-900/40 rounded-3xl border border-slate-800 border-dashed">
-                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No Critical Risks Detected Today</p>
+                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs tracking-widest">No Dataset Anomalies Found</p>
               </div>
             )}
           </div>
         </section>
 
         <footer className="pt-10 border-t border-white/5 flex flex-col md:flex-row justify-between items-center text-slate-600 text-[10px] font-bold uppercase tracking-widest gap-4">
-          <p>© 2026 SatEye Platform — Powered by ISRO & GEE Archives</p>
+          <p>© 2026 SatEye Platform — Local CSV Data Integration Edition</p>
           <div className="flex gap-6">
-            <a href="#" className="hover:text-emerald-500 transition-colors">API Docs</a>
+            <a href="#" className="hover:text-emerald-500 transition-colors">Data Policy</a>
             <a href="#" className="hover:text-emerald-500 transition-colors">Methodology</a>
-            <a href="#" className="hover:text-emerald-500 transition-colors">Contact Support</a>
+            <a href="#" className="hover:text-emerald-500 transition-colors">Dev Support</a>
           </div>
         </footer>
       </div>
@@ -193,7 +202,7 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#020617] flex items-center justify-center text-emerald-500 font-black tracking-widest text-xl animate-pulse uppercase">Initializing Geo-Satellite Engine...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#020617] flex items-center justify-center text-emerald-500 font-black tracking-widest text-xl animate-pulse uppercase italic">Accessing CSV Records...</div>}>
       <DashboardContent />
     </Suspense>
   );

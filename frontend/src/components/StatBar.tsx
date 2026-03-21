@@ -34,38 +34,35 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, unit, status, source 
 export default function StatBar({ data }: { data: any }) {
   if (!data) return null;
 
-  // Extract soil moisture from message if present
-  const soilValue = data.risks?.soil?.message ? (data.risks.soil.message.match(/0\.\d+/) || ["0.08"])[0] : "0.08";
-
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
       <StatCard 
-        label="PM2.5 / Live AQI" 
+        label="PM2.5 / Air Quality" 
         value={data.pm25 || "42"} 
         unit={`µg/m³ (AQI: ${Math.round(data.aqi || (data.pm25 * 1.5))})`}
         status={data.pm25 > 60 ? 'warning' : 'safe'} 
-        source={data.source || "WAQI / Ground Station"} 
+        source={data.source || "Local CSV Data"} 
       />
       <StatCard 
         label="Temperature Rise" 
         value={`+${data.warming || "1.44"}`} 
         unit="°C" 
         status="warning" 
-        source="IMD Historical (1901-2021)" 
+        source="Historical Dataset (1901-2021)" 
       />
       <StatCard 
         label="Avg Soil Moisture" 
-        value={soilValue} 
-        unit="m³/m³"
-        status="warning" 
-        source="ISRO SMAP Observation" 
+        value={data.soil_moisture || "0.08"} 
+        unit="%"
+        status="moderate" 
+        source="Gujarat Agriculture Data (2018)" 
       />
       <StatCard 
         label="Nitrogen Dioxide (NO2)" 
-        value={data.all_pollutants?.NO2 || "19"} 
+        value={data.all_pollutants?.NO2 || "24.5"} 
         unit="ppb" 
         status="moderate" 
-        source="Copernicus Sentinel-5P" 
+        source="Environmental Sensors (CSV)" 
       />
     </div>
   );
