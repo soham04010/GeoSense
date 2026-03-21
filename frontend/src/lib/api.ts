@@ -1,9 +1,14 @@
 import axios from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
 
 export const getCitySummary = async (city: string) => {
   const response = await axios.get(`${API_URL}/api/city/${city}/summary`);
+  return response.data;
+};
+
+export const getAvailableCities = async () => {
+  const response = await axios.get(`${API_URL}/api/cities/available`);
   return response.data;
 };
 

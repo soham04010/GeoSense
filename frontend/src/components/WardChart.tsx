@@ -5,6 +5,9 @@ export default function WardChart({ data }: { data: any }) {
   if (!data || !data.chart_data) return <div className="h-[400px] flex items-center justify-center bg-slate-900 rounded-xl border border-slate-800 animate-pulse text-slate-500">Processing historical trends...</div>;
 
   const chartData = data.chart_data;
+  const totalWarming = data.total_warming;
+  const pred2030 = data.predicted_2030;
+  const pred2050 = data.predicted_2050;
 
   return (
     <div className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800 backdrop-blur-xl h-full flex flex-col shadow-2xl overflow-hidden">
@@ -14,7 +17,11 @@ export default function WardChart({ data }: { data: any }) {
           <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold mt-1">Instrumental Record (1901-2021)</p>
         </div>
         <div className="bg-red-500/10 border border-red-500/20 px-3 py-1 rounded-full">
-          <p className="text-sm font-black text-red-400">+{data.total_warming || '1.44'}°C</p>
+          <p className="text-sm font-black text-red-400">
+            {totalWarming !== undefined && totalWarming !== null
+              ? `${totalWarming > 0 ? '+' : ''}${totalWarming.toFixed(2)}°C`
+              : 'Loading...'}
+          </p>
         </div>
       </div>
       
@@ -67,14 +74,18 @@ export default function WardChart({ data }: { data: any }) {
         <div className="group transition-all">
           <p className="text-[10px] text-slate-500 font-bold uppercase mb-1 tracking-wider group-hover:text-slate-400">2030 Forecast</p>
           <div className="flex items-baseline gap-1">
-            <p className="text-2xl font-black text-orange-400 tracking-tighter">{data.predicted_2030 || '26.1'}°C</p>
+            <p className="text-2xl font-black text-orange-400 tracking-tighter">
+              {pred2030 !== undefined && pred2030 !== null ? `${pred2030.toFixed(1)}°C` : '—'}
+            </p>
             <span className="text-xs font-bold text-orange-400/50">↑</span>
           </div>
         </div>
         <div className="group transition-all">
           <p className="text-[10px] text-slate-500 font-bold uppercase mb-1 tracking-wider group-hover:text-slate-400">2050 Prediction</p>
           <div className="flex items-baseline gap-1">
-            <p className="text-2xl font-black text-red-500 tracking-tighter">{data.predicted_2050 || '26.3'}°C</p>
+            <p className="text-2xl font-black text-red-500 tracking-tighter">
+              {pred2050 !== undefined && pred2050 !== null ? `${pred2050.toFixed(1)}°C` : '—'}
+            </p>
             <span className="text-xs font-bold text-red-500/50">↑</span>
           </div>
         </div>

@@ -20,7 +20,13 @@ from datetime import datetime, timedelta
 # Initialize GEE at startup
 gee_ready = initialize_gee()
 
+from processing.csv_utils import csv_provider
+
 router = APIRouter()
+
+@router.get("/api/cities/available")
+async def get_available_cities():
+    return csv_provider.get_available_cities()
 
 @router.get("/api/city/{city}/map", response_class=HTMLResponse)
 async def get_city_folium_map(city: str):
@@ -86,25 +92,62 @@ def get_city_summary(city: str):
                     cache_gee_value(city, "NDVI", ndvi_val)
                     
                 if no2_val is None:
-                    no2_img = fetch_no2_data(city, last_30d, today_str)
-                    no2_val = float(get_image_mean(no2_img, geom) or 0.0002) * 1e5
-                    cache_gee_value(city, "NO2", no2_val)
+                    pass
             except Exception as e:
-                print(f"GEE Fetch Error: {e}")
+                print(f"GEE Fetch Error for LST/NDVI: {e}")
 
-        # 4. LIVE POLLUTION (WAQI) - Pass pinpoint coordinates
-        live_poll = get_live_pollution(city, lat=lat_center, lng=lng_center)
-        pm25_live = live_poll.get("pm25") if live_poll else None
-        aqi_live = live_poll.get("aqi") if live_poll else None
+        # --- DATA FETCHING (PRIORITIZE CSV) ---
         
-        # Fallbacks (Vadodara should be ~42 as per user)
+        # 1. Pollution from CSV
+        poll_data = csv_provider.get_city_pollution(city)
+        pm25_val = poll_data.get("pm25")
+        no2_val = poll_data.get("no2")
+        ozone_val = poll_data.get("ozone")
+        so2_val = poll_data.get("so2")
+        
+        # 2. Soil Moisture from CSV
+        sm_data = csv_provider.get_district_soil_moisture(city)
+        sm_val = sm_data.get("sm_percentage")
+        
+        # 3. Temperature Trends from CSV
+        temp_trends_csv = csv_provider.get_temperature_trends(city)
+        temp_increase = temp_trends_csv.get("total_change", 1.44)
+        
+        # 4. GEE Fallbacks for NO2 (only if CSV missing)
+        # For PM2.5, we'll use WAQI as a fallback if CSV is missing, not GEE.
+        # For LST/NDVI, we already fetched from GEE above.
+        if no2_val is None and gee_ready:
+            try:
+                today = datetime.now()
+                last_30d = (today - timedelta(days=30)).strftime('%Y-%m-%d')
+                today_str = today.strftime('%Y-%m-%d')
+                if geom is None:
+                    geom = get_city_geometry(city)
+                no2_img = fetch_no2_data(city, last_30d, today_str)
+                no2_val = float(get_image_mean(no2_img, geom) or 0.0002) * 1e5
+                cache_gee_value(city, "NO2", no2_val)
+            except Exception as e:
+                print(f"GEE Fallback for NO2 failed: {e}")
+        
+        # 5. LIVE POLLUTION (WAQI) - Fallback for PM2.5 if CSV is missing
+        live_poll = None
+        if pm25_val is None:
+            live_poll = get_live_pollution(city, lat=lat_center, lng=lng_center)
+            pm25_val = live_poll.get("pm25") if live_poll else None
+            
+        # Final Assignment and Fallbacks
         lst_val = lst_val or 42.0
         ndvi_val = ndvi_val or 0.25
         no2_val = no2_val or 24.5
-        pm25_val = pm25_live or (42.0 if "vadodara" in city.lower() else 64.0)
+        pm25_val = pm25_val or (42.0 if "vadodara" in city.lower() else 64.0)
+        sm_val = sm_val or 12.5 # Default if CSV/GEE fails
         
-        # 4. ML TRENDS & RISKS
-        trends = get_temperature_trend()
+        # AQI is usually derived from PM2.5, so if PM2.5 is available, we can estimate
+        aqi_live = live_poll.get("aqi") if live_poll else (pm25_val * 1.5) # Rough estimation if aqi missing
+        
+        # 4. ML TRENDS & RISKS (using CSV temp trend)
+        # The original get_temperature_trend() is not used if CSV provides it.
+        # If CSV didn't provide temp_increase, we'd fall back to the ML model's default.
         
         # 5. DYNAMIC RISKS
         risks = {
@@ -132,12 +175,16 @@ def get_city_summary(city: str):
                 "NDVI": round(ndvi_val, 2),
                 "NO2": round(no2_val, 1),
                 "PM2.5": pm25_val,
-                "AQI": aqi_live or (pm25_val * 1.5) # Rough estimation if aqi missing
+                "AQI": aqi_live,
+                "SO2": so2_val,
+                "Ozone": ozone_val,
+                "Soil Moisture": sm_val
             },
-            "warming": trends.get("total_warming", 1.44),
-            "predicted_2050": trends.get("predicted_2050", 26.3),
+            "warming": temp_increase,
+            "predicted_2050": temp_increase * 2.1, # Simple projection based on trend
+            "soil_moisture": sm_val,
             "risks": risks,
-            "source": live_poll.get("source", "Satellite Estimate") if live_poll else "Fallback Mode"
+            "source": "Local Environmental Dataset (CSV)" if poll_data or sm_data else "Satellite Estimate"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -145,17 +192,21 @@ def get_city_summary(city: str):
 @router.get("/api/city/{city}/trends")
 def get_city_trends(city: str):
     """
-    Returns: chart_data array for recharts
+    Returns: chart_data array for recharts, plus ML-derived warming stats
     """
     try:
-        trends = get_temperature_trend()
-        if trends["status"] == "error":
+        trends = get_temperature_trend(city)
+        if trends.get("status") == "error":
             raise Exception(trends.get("message"))
         
         return {
             "city": city,
             "parameter": "temperature",
-            "chart_data": trends.get("chart_data")
+            "chart_data": trends.get("chart_data"),
+            "total_warming": trends.get("total_warming"),
+            "predicted_2030": trends.get("predicted_2030"),
+            "predicted_2050": trends.get("predicted_2050"),
+            "slope_per_year": trends.get("slope_per_year"),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -186,28 +237,65 @@ def fetch_live_env_stats(city: str):
 @router.get("/api/city/{city}/anomalies")
 def get_city_anomalies(city: str):
     """
-    Returns live alert cards based on satellite telemetry.
+    Returns live alert cards using CSV pollution data (city-specific) and satellite telemetry.
     """
     try:
         lst_val, ndvi_val = fetch_live_env_stats(city)
         
+        # Pull real CSV data for city-specific pollution alerts
+        poll_data = csv_provider.get_city_pollution(city)
+        pm25_val = poll_data.get("pm25")
+        no2_val = poll_data.get("no2")
+        
         alerts = []
-        if lst_val > 40:
+        
+        # Pollution alert — CSV-grounded
+        if pm25_val is not None:
+            if pm25_val > 150:
+                alerts.append({
+                    "parameter": "Critical Air Quality",
+                    "level": "CRITICAL",
+                    "color": "red",
+                    "message": f"PM2.5 is {pm25_val} µg/m³ — 3x above the safe limit of 60.",
+                    "action": "Implement odd-even vehicle scheme and restrict diesel engines."
+                })
+            elif pm25_val > 60:
+                alerts.append({
+                    "parameter": "Elevated Particulates",
+                    "level": "WARNING",
+                    "color": "orange",
+                    "message": f"PM2.5 is {pm25_val} µg/m³ — above the safe threshold.",
+                    "action": "Increase green cover and monitor vulnerable populations."
+                })
+
+        # NO2 alert — CSV-grounded
+        if no2_val is not None and no2_val > 100:
+            alerts.append({
+                "parameter": "High Nitrogen Dioxide",
+                "level": "WARNING",
+                "color": "orange",
+                "message": f"NO2 is {no2_val:.1f} ppb — elevated traffic pollution level.",
+                "action": "Reduce vehicle density in high-emission corridors."
+            })
+
+        # Thermal alert — GEE/fallback satellite
+        if lst_val and lst_val > 40:
             alerts.append({
                 "parameter": "Extreme Heat",
                 "level": "CRITICAL" if lst_val > 44 else "WARNING",
                 "color": "red",
                 "message": f"Surface temperature hit {lst_val:.1f}°C. Heatwave protocols active.",
-                "action": "Open community cooling centers"
+                "action": "Open community cooling centers and distribute water."
             })
             
-        if ndvi_val < 0.2:
+        # Vegetation alert — GEE/fallback satellite
+        if ndvi_val and ndvi_val < 0.2:
             alerts.append({
                 "parameter": "Vegetation Loss",
                 "level": "WARNING",
                 "color": "orange",
                 "message": f"NDVI index dropped to {ndvi_val:.2f}. Urban greening required.",
-                "action": "Schedule emergency irrigation/planting"
+                "action": "Schedule emergency irrigation/planting programme."
             })
             
         return {
@@ -263,9 +351,9 @@ def get_city_heatmap(city: str):
 
         random.seed(city.lower()) # Consistent values per city
         
-        # Fetch live mean for grounding the heatmap
-        live_poll = get_live_pollution(city)
-        base_pm25 = live_poll.get("pm25") if live_poll else 42.0
+        # Ground the heatmap in CSV pollution mean
+        poll_data = csv_provider.get_city_pollution(city)
+        base_pm25 = poll_data.get("pm25", 42.0)
         
         wards_data = []
         for feature in geojson["features"]:
@@ -293,7 +381,5 @@ def get_city_heatmap(city: str):
             "center": base_coords,
             "wards": wards_data
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
