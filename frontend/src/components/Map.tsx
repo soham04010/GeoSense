@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -72,51 +72,41 @@ export default function SatEyeMap({ geoData, activeLayer = 'lst', onWardClick }:
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
         
-        {/* Render Point Markers instead of Polygons */}
+        {/* Render true Polygon Mesh covering city sections */}
         {geoData.wards && geoData.wards.map((ward: any, idx: number) => {
-          // Simple centroid calculation from Polygon Coordinates
-          let latSum = 0, lngSum = 0, pts = 0;
+          let positions: [number, number][] = [];
           try {
-             // Handle Geometry Collection or Polygon
+             // Extract coordinates (GeoJSON is [lng, lat], Leaflet expects [lat, lng])
              const coords = ward.geometry.type === 'Polygon' ? ward.geometry.coordinates[0] : ward.geometry.coordinates[0][0]; 
-             coords.forEach((coord: number[]) => {
-               lngSum += coord[0];
-               latSum += coord[1];
-               pts++;
-             });
+             positions = coords.map((c: number[]) => [c[1], c[0]]);
           } catch(e) { return null; }
-          const wardLat = latSum / pts;
-          const wardLng = lngSum / pts;
 
           const styles = getColorAndSize(ward[activeLayer], activeLayer);
 
           return (
-            <CircleMarker 
+            <Polygon 
               key={`${ward.ward}-${idx}`}
-              center={[wardLat, wardLng]}
-              radius={styles.radius}
+              positions={positions}
               pathOptions={{ 
                 fillColor: styles.color, 
                 color: 'white', 
-                weight: 2, 
-                fillOpacity: 0.85 
+                weight: 1.5, // Thin crisp grid lines
+                fillOpacity: 0.65 // Slightly transparent to let map show through
               }}
               eventHandlers={{
-                mouseover: (e) => {
-                  e.target.setStyle({ weight: 4, fillOpacity: 1 });
+                mouseover: (e: any) => {
+                  e.target.setStyle({ weight: 3, fillOpacity: 0.9, color: '#333' });
                 },
-                mouseout: (e) => {
-                  e.target.setStyle({ weight: 2, fillOpacity: 0.85 });
+                mouseout: (e: any) => {
+                  e.target.setStyle({ weight: 1.5, fillOpacity: 0.65, color: 'white' });
                 },
                 click: () => {
-                  // Pass the ward data up to trigger opening the data sidebar
                   if (onWardClick) onWardClick(ward);
                 }
               }}
             >
-              {/* Optional: Add a simple browser tooltip for quick hovers */}
-              <div className="hidden">Hover to inspect</div>
-            </CircleMarker>
+              <div className="hidden">Hover to inspect sector</div>
+            </Polygon>
           );
         })}
       </MapContainer>
