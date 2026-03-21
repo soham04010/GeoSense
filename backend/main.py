@@ -2,21 +2,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import city, report
 
-app = FastAPI(title="SatEye API", description="Backend for Satellite Environmental Intelligence")
+app = FastAPI(
+    title="SatEye API", 
+    description="Electronic Health Record & Environmental Satellite Intelligence"
+)
 
-# 1. Allow frontend to communicate with backend
+# Allow frontend to communicate with backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Lets Next.js talk to this API
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. Attach your routes
+# Attach routes
 app.include_router(city.router)
 app.include_router(report.router)
 
-# 3. Simple health check route
 @app.get("/")
 def health_check():
-    return {"status": "SatEye API is LIVE and ready for the hackathon."}
+    return {"status": "ok", "message": "SatEye API running"}
+
+if __name__ == "__main__":
+    import uvicorn
+    from database import initialize_spatial_db
+    
+    # Force PostGIS & Schema initialization
+    initialize_spatial_db()
+    
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
