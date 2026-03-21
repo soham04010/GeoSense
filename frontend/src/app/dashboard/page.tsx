@@ -4,12 +4,13 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import dynamic from "next/dynamic";
-import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap, getAvailableCities } from "@/lib/api";
+import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap, getAvailableCities, getCityInsights } from "@/lib/api";
 import { CitySummary, CityTrends, CityAnomalies, CityHeatmap } from "@/types";
 
 import ReportDownload from "@/components/ReportDownload";
 import AICopilot from "@/components/AICopilot";
 import PollutantChart from "@/components/PollutantChart";
+import CityReport from "@/components/CityReport";
 
 // Dynamically import client-side components
 const DynamicMap = dynamic(() => import("@/components/Map"), { 
@@ -141,6 +142,7 @@ function DashboardContent() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [currentLayer, setCurrentLayer] = useState<'lst' | 'ndvi' | 'pm25'>('pm25');
   const [selectedWard, setSelectedWard] = useState<any>(null);
+  const [insights, setInsights] = useState<any>(null);
 
   useEffect(() => {
     const fetchCities = async () => {
@@ -158,17 +160,19 @@ function DashboardContent() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [sumRes, trendRes, anomRes, heatRes] = await Promise.all([
+        const [sumRes, trendRes, anomRes, heatRes, insightsRes] = await Promise.all([
           getCitySummary(city),
           getCityTrends(city),
           getCityAnomalies(city),
-          getCityHeatmap(city)
+          getCityHeatmap(city),
+          getCityInsights(city)
         ]);
         
         setSummary(sumRes);
         setTrends(trendRes);
         setAnomalies(anomRes);
         setHeatmap(heatRes);
+        setInsights(insightsRes);
         setSelectedWard(null);
       } catch (err) {
         console.error("Error fetching dashboard data", err);
@@ -389,9 +393,6 @@ function DashboardContent() {
                        </div>
                     </div>
                  </div>
-                 <div className="w-[100px] h-[110px] shrink-0 flex items-center justify-center -mr-2 mt-2">
-                    <AqiCharacter aqi={activeData.aqi} />
-                 </div>
               </div>
            )}
 
@@ -575,6 +576,11 @@ function DashboardContent() {
              <div className="flex-1 bg-[#15803d]">1.0+</div>
            </div>
         )}
+      </div>
+
+      {/* ── CITY INTELLIGENCE REPORT RIGHT PANEL ── */}
+      <div className="absolute top-[88px] right-6 bottom-6 w-[420px] bg-white/80 backdrop-blur-[2rem] rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-[#E8ECF4] z-[500] flex flex-col overflow-hidden">
+        <CityReport insights={insights} />
       </div>
 
       {/* Floating AI Copilot remains unchanged but positioned around panels */}

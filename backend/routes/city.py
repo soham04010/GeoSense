@@ -204,6 +204,197 @@ def get_city_trends(city: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/api/city/{city}/insights")
+def get_city_insights(city: str):
+    """
+    Core output API: City Health Score, Threat Ranking, Action Plan.
+    This is the main value-delivery endpoint of the platform.
+    """
+    try:
+        poll_data   = csv_provider.get_city_pollution(city)
+        sm_data     = csv_provider.get_district_soil_moisture(city)
+        temp_trends = csv_provider.get_temperature_trends(city)
+        ml_trends   = get_temperature_trend(city)
+
+        pm25    = float(poll_data.get("pm25")  or 55.0)
+        no2     = float(poll_data.get("no2")   or 28.0)
+        so2     = float(poll_data.get("so2")   or 12.0)
+        ozone   = float(poll_data.get("ozone") or 35.0)
+        sm      = float(sm_data.get("sm_percentage") or 8.0)
+        warming = float(temp_trends.get("total_change") or 1.0)
+        slope   = float(ml_trends.get("slope_per_year") or 0.012)
+        pred_2030 = float(ml_trends.get("predicted_2030") or 25.5)
+
+        # Component scores (0-100, higher = healthier)
+        def clamp(v, lo, hi): return max(lo, min(hi, v))
+        pm25_score  = clamp(100 - (pm25 / 2.0),  0, 100)
+        no2_score   = clamp(100 - (no2 / 2.5),   0, 100)
+        so2_score   = clamp(100 - (so2 / 1.5),   0, 100)
+        ozone_score = clamp(100 - (ozone / 2.0), 0, 100)
+        sm_score    = clamp(sm * 5, 0, 100)
+        temp_score  = clamp(100 - (abs(warming) * 30), 0, 100)
+
+        score = round(pm25_score*0.35 + no2_score*0.15 + so2_score*0.10 +
+                      ozone_score*0.10 + sm_score*0.15 + temp_score*0.15)
+
+        if score >= 80:   grade = "A"
+        elif score >= 65: grade = "B"
+        elif score >= 50: grade = "C"
+        elif score >= 35: grade = "D"
+        else:             grade = "F"
+
+        NATIONAL_PM25 = 60.0
+        NATIONAL_NO2  = 40.0
+        NATIONAL_TEMP = 1.2
+
+        threat_candidates = []
+
+        if pm25 > 30:
+            proj = round(pm25 * (1 + slope * 10), 1)
+            threat_candidates.append({
+                "parameter": "PM2.5 Air Pollution",
+                "icon": "wind",
+                "value": pm25,
+                "unit": "ug/m3",
+                "threshold": 60,
+                "severity": "CRITICAL" if pm25 > 100 else "WARNING" if pm25 > 60 else "MODERATE",
+                "projection_year": 2030,
+                "projection_val": proj,
+                "vs_national": f"{round(((pm25-NATIONAL_PM25)/NATIONAL_PM25)*100):+d}% vs safe limit",
+                "score": 100 - pm25_score,
+                "recommendation": (
+                    f"Enforce strict vehicle emission norms and expand public transit. "
+                    f"Deploy air quality monitors in schools and hospitals. "
+                    f"PM2.5 projected to reach {proj} ug/m3 by 2030 if unchanged."
+                )
+            })
+
+        if no2 > 25:
+            threat_candidates.append({
+                "parameter": "Nitrogen Dioxide (NO2)",
+                "icon": "factory",
+                "value": no2,
+                "unit": "ppb",
+                "threshold": 40,
+                "severity": "CRITICAL" if no2 > 100 else "WARNING" if no2 > 40 else "MODERATE",
+                "projection_year": 2030,
+                "projection_val": round(no2 * 1.15, 1),
+                "vs_national": f"{round(((no2-NATIONAL_NO2)/NATIONAL_NO2)*100):+d}% vs safe limit",
+                "score": 100 - no2_score,
+                "recommendation": (
+                    "Mandate catalytic converters for all diesel vehicles. "
+                    "Establish low-emission zones around schools and hospitals."
+                )
+            })
+
+        threat_candidates.append({
+            "parameter": "Urban Heat & Warming",
+            "icon": "thermometer",
+            "value": round(warming, 2),
+            "unit": "deg C since 1901",
+            "threshold": 1.5,
+            "severity": "CRITICAL" if abs(warming) > 2 else "WARNING" if abs(warming) > 1 else "MODERATE",
+            "projection_year": 2030,
+            "projection_val": round(pred_2030, 1),
+            "vs_national": f"{round(((abs(warming)-NATIONAL_TEMP)/NATIONAL_TEMP)*100):+d}% vs national avg",
+            "score": 100 - temp_score,
+            "recommendation": (
+                f"Mandate cool-roof materials on all new constructions. "
+                f"Plant trees along arterial roads. Temperature will reach {round(pred_2030,1)}C by 2030."
+            )
+        })
+
+        if sm < 15:
+            threat_candidates.append({
+                "parameter": "Soil & Water Stress",
+                "icon": "leaf",
+                "value": sm,
+                "unit": "%",
+                "threshold": 12,
+                "severity": "WARNING" if sm < 10 else "MODERATE",
+                "projection_year": 2030,
+                "projection_val": round(sm * 0.85, 1),
+                "vs_national": "Below Gujarat average",
+                "score": 100 - sm_score,
+                "recommendation": (
+                    "Implement micro-irrigation in peri-urban zones. "
+                    "Restore wetlands and enforce rainwater harvesting."
+                )
+            })
+
+        threat_candidates.sort(key=lambda t: t["score"], reverse=True)
+        threats = []
+        for rank, t in enumerate(threat_candidates[:3], 1):
+            t["rank"] = rank
+            threats.append(t)
+
+        # Action plan
+        actions = []
+        p = 1
+        if pm25 > 100:
+            actions.append({
+                "priority": p, "title": "Emergency Air Quality Response",
+                "impact": "HIGH", "timeline": "Immediate (0-30 days)",
+                "detail": f"Activate odd-even traffic scheme. Issue health advisory. PM2.5 = {pm25} ug/m3.",
+                "icon": "alert"
+            }); p += 1
+        elif pm25 > 60:
+            actions.append({
+                "priority": p, "title": "Pollution Reduction Drive",
+                "impact": "HIGH", "timeline": "Short-term (1-3 months)",
+                "detail": f"Increase street cleaning frequency. PM2.5 at {pm25} ug/m3 -- 33% above limit.",
+                "icon": "leaf"
+            }); p += 1
+
+        actions.append({
+            "priority": p, "title": "Urban Heat Island Mitigation",
+            "impact": "MEDIUM", "timeline": "Medium-term (3-12 months)",
+            "detail": f"City has warmed {round(warming,2)} deg C. Install 5,000 reflective rooftops and plant 10,000 trees.",
+            "icon": "tree"
+        }); p += 1
+
+        if sm < 12:
+            actions.append({
+                "priority": p, "title": "Groundwater Recharge Initiative",
+                "impact": "MEDIUM", "timeline": "Medium-term (6-18 months)",
+                "detail": f"Soil moisture at {sm}% -- below critical threshold. Restore urban lakes.",
+                "icon": "water"
+            }); p += 1
+
+        actions.append({
+            "priority": p, "title": "Long-Term Climate Resilience Plan",
+            "impact": "HIGH", "timeline": "Long-term (1-5 years)",
+            "detail": f"Commission city-level climate adaptation plan. Target: cap warming at {round(warming+0.3,1)} deg C.",
+            "icon": "plan"
+        })
+
+        if grade in ("F", "D"):
+            headline = f"Critical environmental stress -- {threats[0]['parameter']} requires immediate intervention" if threats else "Critical environmental stress"
+        elif grade == "C":
+            headline = f"Moderate risk -- {threats[0]['parameter']} above safe limits, action needed" if threats else "Moderate risk"
+        else:
+            headline = f"Generally healthy -- monitor {threats[0]['parameter']} to maintain standards" if threats else "Generally healthy"
+
+        return {
+            "city":    city,
+            "score":   score,
+            "grade":   grade,
+            "headline": headline,
+            "threats": threats,
+            "actions": actions,
+            "vs_national": {
+                "pm25_delta": f"{round(pm25-NATIONAL_PM25,1):+} ug/m3 vs safe limit",
+                "temp_delta": f"{round(warming-NATIONAL_TEMP,2):+} deg C vs national avg",
+                "sm_level":   f"{round(sm,1)}% soil moisture"
+            },
+            "data_sources": ["CPCB pollution.csv", "Gujarat sm_Gujarat_2018.csv", "IMD TEMP_ANNUAL_SEASONAL_MEAN.csv"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def fetch_live_env_stats(city: str):
     """Internal helper to get live stats with caching."""
     lst_val = get_cached_gee_value(city, "LST")
@@ -308,60 +499,73 @@ def get_city_heatmap(city: str):
     try:
         import requests, hashlib
 
-        # 1. Geocode city → get center + bounding box
-        url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
+        from shapely.geometry import shape, box
+        
+        # 1. Geocode city & get true Polygon boundary
+        url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&polygon_geojson=1"
         headers = {'User-Agent': 'SatEye-App'}
         response = requests.get(url, headers=headers, timeout=5)
-        geo_data = response.json()
+        res_data = response.json()
+        
+        city_shape = None
+        base_coords = [23.0225, 72.5714]
+        lat_min_bb, lat_max_bb, lng_min_bb, lng_max_bb = 22.94, 23.10, 72.49, 72.65
+        
+        if res_data:
+            # Find the best administrative boundary result
+            for r in res_data:
+                g_type = r.get("geojson", {}).get("type")
+                if g_type in ("Polygon", "MultiPolygon"):
+                    city_shape = shape(r["geojson"])
+                    base_coords = [float(r["lat"]), float(r["lon"])]
+                    break
+            
+            # Fallback to first result bbox if no polygon found
+            if not city_shape:
+                base_coords = [float(res_data[0]["lat"]), float(res_data[0]["lon"])]
+                bbox = res_data[0].get("boundingbox")
+                if bbox:
+                    lat_min_bb, lat_max_bb = float(bbox[0]), float(bbox[1])
+                    lng_min_bb, lng_max_bb = float(bbox[2]), float(bbox[3])
+                    city_shape = box(lng_min_bb, lat_min_bb, lng_max_bb, lat_max_bb)
+                else:
+                    city_shape = box(base_coords[1]-0.08, base_coords[0]-0.08, base_coords[1]+0.08, base_coords[0]+0.08)
 
-        if geo_data:
-            lat_center = float(geo_data[0]["lat"])
-            lng_center = float(geo_data[0]["lon"])
-            # Nominatim returns [south, north, west, east]
-            bbox = geo_data[0].get("boundingbox")
-            if bbox:
-                lat_min_bb = float(bbox[0])
-                lat_max_bb = float(bbox[1])
-                lng_min_bb = float(bbox[2])
-                lng_max_bb = float(bbox[3])
-            else:
-                # Fallback: ±0.08° around center (~8km)
-                lat_min_bb = lat_center - 0.08
-                lat_max_bb = lat_center + 0.08
-                lng_min_bb = lng_center - 0.08
-                lng_max_bb = lng_center + 0.08
-        else:
-            lat_center, lng_center = 23.0225, 72.5714
-            lat_min_bb, lat_max_bb = lat_center - 0.08, lat_center + 0.08
-            lng_min_bb, lng_max_bb = lng_center - 0.08, lng_center + 0.08
+        # Get exact bounds from the chosen shape
+        lng_min_bb, lat_min_bb, lng_max_bb, lat_max_bb = city_shape.bounds
 
-        base_coords = [lat_center, lng_center]
-
-        # 2. Build 6x6 grid spread across actual city bounding box
-        GRID = 6
-        lat_step = (lat_max_bb - lat_min_bb) / GRID
-        lng_step = (lng_max_bb - lng_min_bb) / GRID
-
+        # 2. Build incredibly dense precision grid restricted to city boundary
+        GRID_SIZE = 14 # 196 possible sectors for great detailing
+        lat_step = (lat_max_bb - lat_min_bb) / GRID_SIZE
+        lng_step = (lng_max_bb - lng_min_bb) / GRID_SIZE
+        
         features = []
-        for row in range(GRID):
-            for col in range(GRID):
-                ward_lat_min = lat_min_bb + row * lat_step
-                ward_lat_max = ward_lat_min + lat_step
-                ward_lng_min = lng_min_bb + col * lng_step
-                ward_lng_max = ward_lng_min + lng_step
-                ward_name = f"{city} Sector {row * GRID + col + 1}"
-                features.append({
-                    "type": "Feature",
-                    "properties": {"ward_name": ward_name},
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": [[[ward_lng_min, ward_lat_min],
-                                         [ward_lng_max, ward_lat_min],
-                                         [ward_lng_max, ward_lat_max],
-                                         [ward_lng_min, ward_lat_max],
-                                         [ward_lng_min, ward_lat_min]]]
-                    }
-                })
+        cell_id = 1
+        for row in range(GRID_SIZE):
+            for col in range(GRID_SIZE):
+                w_lat_min = lat_min_bb + row * lat_step
+                w_lat_max = w_lat_min + lat_step
+                w_lng_min = lng_min_bb + col * lng_step
+                w_lng_max = w_lng_min + lng_step
+                
+                cell_box = box(w_lng_min, w_lat_min, w_lng_max, w_lat_max)
+                
+                # Check if this cell is significantly inside the true city boundary
+                if city_shape.intersects(cell_box.centroid) or city_shape.intersection(cell_box).area > (cell_box.area * 0.15):
+                    ward_name = f"{city} Sector {cell_id}"
+                    features.append({
+                        "type": "Feature",
+                        "properties": {"ward_name": ward_name},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[w_lng_min, w_lat_min],
+                                             [w_lng_max, w_lat_min],
+                                             [w_lng_max, w_lat_max],
+                                             [w_lng_min, w_lat_max],
+                                             [w_lng_min, w_lat_min]]]
+                        }
+                    })
+                    cell_id += 1
 
         # 3. Pull CSV baseline for the city (Fallback/Base values)
         poll_data = csv_provider.get_city_pollution(city)

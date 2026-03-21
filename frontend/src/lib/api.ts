@@ -27,6 +27,11 @@ export const getCityHeatmap = async (city: string) => {
   return response.data;
 };
 
+export const getCityInsights = async (city: string) => {
+  const response = await axios.get(`${API_URL}/api/city/${city}/insights`);
+  return response.data;
+};
+
 export const generateReport = async (city: string) => {
   const response = await axios.post(`${API_URL}/api/report/generate?city=${city}`, {}, {
     responseType: 'blob', // Important for PDF download
