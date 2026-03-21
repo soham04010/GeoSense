@@ -3,33 +3,41 @@ import os
 import json
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from google.oauth2 import service_account
 
 # Load environment variables
 load_dotenv()
 
+# Resolve the path to gee_key.json relative to this file
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_KEY_PATH = os.path.join(_BASE_DIR, "..", "gee_key.json")
+
 def initialize_gee():
-    """Initializes Google Earth Engine."""
+    """Initializes Google Earth Engine using the service account key file."""
     try:
-        # Check for service account credentials in environment
-        service_account = os.getenv("GEE_SERVICE_ACCOUNT")
-        private_key = os.getenv("GEE_PRIVATE_KEY")
-        
-        if service_account and private_key:
-            try:
-                key_data = json.loads(private_key)
-                credentials = ee.ServiceAccountCredentials(service_account, key_data=key_data)
-                ee.Initialize(credentials)
-                print("GEE Initialized successfully with service account.")
-            except Exception as auth_err:
-                print(f"WARNING: Service account auth failed, trying default: {auth_err}")
-                ee.Initialize()
-        else:
-            # Fallback to default user authentication
-            ee.Initialize()
-            print("GEE Initialized with default credentials.")
+        key_path = os.getenv("GEE_KEY_PATH", _KEY_PATH)
+        key_path = os.path.abspath(key_path)
+
+        with open(key_path, "r") as f:
+            key_data = json.load(f)
+
+        project_id = key_data.get("project_id", "prem-487710")
+        client_email = key_data.get("client_email")
+
+        credentials = service_account.Credentials.from_service_account_info(
+            key_data,
+            scopes=["https://www.googleapis.com/auth/earthengine"]
+        )
+
+        ee.Initialize(credentials=credentials, project=project_id)
+        print(f"✅ GEE Authenticated as {client_email} on project [{project_id}]")
         return True
+
+    except FileNotFoundError:
+        print(f"⚠️  gee_key.json not found at {_KEY_PATH}. GEE disabled.")
+        return False
     except Exception as e:
-        print(f"ERROR: GEE Initialization failed: {e}")
+        print(f"⚠️  GEE Initialization failed: {e}")
         return False
 
 import requests

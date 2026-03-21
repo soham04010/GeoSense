@@ -12,7 +12,7 @@ import os
 ee.Authenticate() 
 
 # Replace this with the project ID you just created in Step 1!
-ee.Initialize(project='jeevrak')
+ee.Initialize(project='prem-487710')
 
 # 1. Load Environment Variables
 load_dotenv()
