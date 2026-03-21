@@ -180,8 +180,8 @@ def get_city_summary(city: str):
                 "Ozone": ozone_val,
                 "Soil Moisture": sm_val
             },
-            "warming": temp_increase,
-            "predicted_2050": temp_increase * 2.1, # Simple projection based on trend
+            "warming": round(temp_increase, 2),
+            "predicted_2050": round(temp_trends_csv.get("avg_annual", 25.0) + abs(temp_increase) * 1.5, 2),
             "soil_moisture": sm_val,
             "risks": risks,
             "source": "Local Environmental Dataset (CSV)" if poll_data or sm_data else "Satellite Estimate"
@@ -308,74 +308,123 @@ def get_city_anomalies(city: str):
 @router.get("/api/city/{city}/heatmap")
 def get_city_heatmap(city: str):
     """
-    Returns a dynamic heatmap for ANY city or location.
+    Returns a dynamic heatmap for ANY city.
+    Grid cells are spread across the real city bounding box.
+    Each ward has comprehensive environmental data.
     """
     try:
-        # Get dynamic center via Geocoding first (Robust)
-        import requests
+        import requests, hashlib
+
+        # 1. Geocode city → get center + bounding box
         url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
         headers = {'User-Agent': 'SatEye-App'}
         response = requests.get(url, headers=headers, timeout=5)
-        data = response.json()
-        
-        if data:
-            lat_center = float(data[0]["lat"])
-            lng_center = float(data[0]["lon"])
-        else:
-            # Fallback to Ahmedabad coords if geocoding fails
-            lat_center, lng_center = 23.0225, 72.5714
-            
-        base_coords = [lat_center, lng_center]
-        
-        # Generate a 6x6 grid of wards dynamically for ANY location
-        wards_list = ["Central", "North", "South", "East", "West", "Zone A", "Zone B", "Zone C", "Zone D", "Zone E", "Ward 1", "Ward 2", "Ward 3", "Ward 4", "Ward 5", "Sub-A", "Sub-B", "Sub-C", "Sub-D", "Sub-E", "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Sector 1", "Sector 2", "Sector 3", "Sector 4", "Sector 5"]
-        features = []
-        offset = 0.012 # tighter grid
-        for i, ward in enumerate(wards_list[:36]):
-            row = i // 6
-            col = i % 6
-            lat_min = lat_center + (row - 3) * offset
-            lat_max = lat_min + offset
-            lng_min = lng_center + (col - 3) * offset
-            lng_max = lng_min + offset
-            
-            features.append({
-                "type": "Feature",
-                "properties": {"ward_name": f"{city} {ward}"},
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[[lng_min, lat_min], [lng_max, lat_min], [lng_max, lat_max], [lng_min, lat_max], [lng_min, lat_min]]]
-                }
-            })
-        geojson = {"type": "FeatureCollection", "features": features}
+        geo_data = response.json()
 
-        random.seed(city.lower()) # Consistent values per city
-        
-        # Ground the heatmap in CSV pollution mean
+        if geo_data:
+            lat_center = float(geo_data[0]["lat"])
+            lng_center = float(geo_data[0]["lon"])
+            # Nominatim returns [south, north, west, east]
+            bbox = geo_data[0].get("boundingbox")
+            if bbox:
+                lat_min_bb = float(bbox[0])
+                lat_max_bb = float(bbox[1])
+                lng_min_bb = float(bbox[2])
+                lng_max_bb = float(bbox[3])
+            else:
+                # Fallback: ±0.08° around center (~8km)
+                lat_min_bb = lat_center - 0.08
+                lat_max_bb = lat_center + 0.08
+                lng_min_bb = lng_center - 0.08
+                lng_max_bb = lng_center + 0.08
+        else:
+            lat_center, lng_center = 23.0225, 72.5714
+            lat_min_bb, lat_max_bb = lat_center - 0.08, lat_center + 0.08
+            lng_min_bb, lng_max_bb = lng_center - 0.08, lng_center + 0.08
+
+        base_coords = [lat_center, lng_center]
+
+        # 2. Build 6x6 grid spread across actual city bounding box
+        GRID = 6
+        lat_step = (lat_max_bb - lat_min_bb) / GRID
+        lng_step = (lng_max_bb - lng_min_bb) / GRID
+
+        features = []
+        for row in range(GRID):
+            for col in range(GRID):
+                ward_lat_min = lat_min_bb + row * lat_step
+                ward_lat_max = ward_lat_min + lat_step
+                ward_lng_min = lng_min_bb + col * lng_step
+                ward_lng_max = ward_lng_min + lng_step
+                ward_name = f"{city} Sector {row * GRID + col + 1}"
+                features.append({
+                    "type": "Feature",
+                    "properties": {"ward_name": ward_name},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[ward_lng_min, ward_lat_min],
+                                         [ward_lng_max, ward_lat_min],
+                                         [ward_lng_max, ward_lat_max],
+                                         [ward_lng_min, ward_lat_max],
+                                         [ward_lng_min, ward_lat_min]]]
+                    }
+                })
+
+        # 3. Pull CSV baseline for the city
         poll_data = csv_provider.get_city_pollution(city)
-        base_pm25 = poll_data.get("pm25", 42.0)
-        
+        base_pm25  = poll_data.get("pm25",  55.0)
+        base_no2   = poll_data.get("no2",   28.0)
+        base_so2   = poll_data.get("so2",   12.0)
+        base_ozone = poll_data.get("ozone", 35.0)
+        # Estimate PM10 from PM2.5 (typical ratio 1.6)
+        base_pm10  = round((base_pm25 or 55.0) * 1.6, 1)
+
+        # 4. Build ward-level data with deterministic per-ward variation
         wards_data = []
-        for feature in geojson["features"]:
-            name = feature["properties"].get("ward_name", "Unknown Ward")
-            lst = round(random.uniform(38.0, 46.0), 1)
-            ndvi = round(random.uniform(0.1, 0.4), 2)
-            pm25 = round(random.uniform(base_pm25 * 0.8, base_pm25 * 1.2), 1)
-            
+        for feature in features:
+            name = feature["properties"]["ward_name"]
+            # Deterministic seed per ward name
+            ward_hash = int(hashlib.md5(name.encode()).hexdigest(), 16)
+
+            def vary(base, pct_range=0.25):
+                """Deterministic ±pct_range variation using ward hash."""
+                factor = 1.0 + ((ward_hash % 1000) / 1000.0 - 0.5) * 2 * pct_range
+                return round(float(base) * factor, 1)
+
+            pm25  = vary(base_pm25)
+            pm10  = vary(base_pm10, 0.20)
+            no2   = vary(base_no2,  0.30)
+            so2   = vary(base_so2,  0.35)
+            ozone = vary(base_ozone, 0.20)
+            lst   = vary(42.0, 0.12)
+            ndvi  = round(min(max((ward_hash % 400) / 1000.0, 0.05), 0.5), 2)
+
+            # AQI from PM2.5 (standard linear breakpoint rough estimate)
+            if pm25 <= 12:    aqi = round(pm25 * 4.2)
+            elif pm25 <= 35:  aqi = round(50 + (pm25 - 12) * 2.1)
+            elif pm25 <= 55:  aqi = round(100 + (pm25 - 35) * 0.5)
+            elif pm25 <= 150: aqi = round(150 + (pm25 - 55) * 1.6)
+            else:             aqi = round(250 + (pm25 - 150))
+
             coords = feature["geometry"]["coordinates"][0]
             avg_lng = sum(p[0] for p in coords[:-1]) / (len(coords) - 1)
             avg_lat = sum(p[1] for p in coords[:-1]) / (len(coords) - 1)
-            
+
             wards_data.append({
                 "ward": name,
-                "lst": lst,
-                "ndvi": ndvi,
-                "pm25": pm25,
-                "lat": avg_lat,
-                "lng": avg_lng,
+                "lst":   lst,
+                "ndvi":  ndvi,
+                "pm25":  pm25,
+                "pm10":  pm10,
+                "no2":   no2,
+                "so2":   so2,
+                "ozone": ozone,
+                "aqi":   aqi,
+                "lat":   avg_lat,
+                "lng":   avg_lng,
                 "geometry": feature["geometry"]
             })
-            
+
         return {
             "city": city,
             "center": base_coords,
