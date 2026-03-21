@@ -22,6 +22,15 @@ function ChangeView({ center }: { center: [number, number] }) {
   return null;
 }
 
+function aqiLabel(aqi: number): { text: string; color: string } {
+  if (aqi <= 50)  return { text: 'Good',        color: '#22c55e' };
+  if (aqi <= 100) return { text: 'Moderate',     color: '#facc15' };
+  if (aqi <= 150) return { text: 'Unhealthy (S)',color: '#f97316' };
+  if (aqi <= 200) return { text: 'Unhealthy',    color: '#ef4444' };
+  if (aqi <= 300) return { text: 'Very Unhealthy',color: '#9b1c9b' };
+  return           { text: 'Hazardous',          color: '#7f1d1d' };
+}
+
 export default function SatEyeMap({ geoData, activeLayer = 'lst', onWardClick }: { geoData: any, activeLayer?: 'lst' | 'ndvi' | 'pm25', onWardClick?: (ward: any) => void }) {
   const center: [number, number] = geoData?.center || [23.0225, 72.5714];
 
@@ -31,19 +40,19 @@ export default function SatEyeMap({ geoData, activeLayer = 'lst', onWardClick }:
              value > 42 ? '#f97316' :
              value > 40 ? '#facc15' :
              value > 38 ? '#22c55e' :
-                        '#10b981';
+                         '#10b981';
     } else if (layer === 'ndvi') {
       return value > 0.4 ? '#059669' :
              value > 0.3 ? '#10b981' :
              value > 0.2 ? '#34d399' :
              value > 0.1 ? '#a7f3d0' :
-                        '#ecfdf5';
+                         '#ecfdf5';
     } else { // pm25
       return value > 45 ? '#b91c1c' :
              value > 40 ? '#ef4444' :
              value > 35 ? '#f97316' :
              value > 30 ? '#facc15' :
-                        '#22c55e';
+                         '#22c55e';
     }
   };
 
@@ -62,35 +71,73 @@ export default function SatEyeMap({ geoData, activeLayer = 'lst', onWardClick }:
       }
     });
 
-    const { ward: name, lst, ndvi, pm25 } = ward;
+    const { ward: name, lst, ndvi, pm25, pm10, no2, so2, ozone, aqi } = ward;
+    const aqiInfo = aqiLabel(aqi || Math.round((pm25 || 55) * 1.5));
+    const aqiVal  = aqi || Math.round((pm25 || 55) * 1.5);
+
     layer.bindPopup(`
-      <div class="glass-popup p-4 min-w-[200px] border border-white/10 rounded-2xl shadow-2xl backdrop-blur-md bg-slate-900/40 text-white">
-        <div class="flex items-center gap-2 mb-3 border-b border-white/5 pb-2">
-          <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-          <h3 class="font-black text-xs uppercase tracking-widest">${name}</h3>
+      <div style="font-family:'Inter',sans-serif;min-width:240px;background:#0f172a;border:1px solid rgba(255,255,255,0.1);border-radius:16px;overflow:hidden;box-shadow:0 25px 50px rgba(0,0,0,0.8);">
+        <!-- Header -->
+        <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.07);">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981;animation:pulse 2s infinite;"></div>
+            <p style="font-size:9px;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:0.15em;margin:0;">Live Sector Intelligence</p>
+          </div>
+          <h3 style="font-size:13px;font-weight:900;color:#f1f5f9;letter-spacing:-0.02em;margin:0;text-transform:uppercase;">${name}</h3>
         </div>
-        <div class="space-y-3">
-          <div class="flex justify-between items-center group">
-            <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Surface Temp</span>
-            <span class="text-sm font-black text-emerald-400 flex items-center gap-1">${lst}°C <span class="text-[8px] opacity-40">LST</span></span>
-          </div>
-          <div class="flex justify-between items-center">
-            <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Veg Health</span>
-            <span class="text-sm font-black text-sky-400">${ndvi} <span class="text-[8px] opacity-40">NDVI</span></span>
-          </div>
-          <div class="flex justify-between items-center">
-            <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Air Quality</span>
-            <span class="text-sm font-black text-orange-400">${pm25} <span class="text-[8px] opacity-40">µG/M³</span></span>
+
+        <!-- AQI Banner -->
+        <div style="padding:12px 16px;background:${aqiInfo.color}18;border-bottom:1px solid rgba(255,255,255,0.05);">
+          <p style="font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;margin:0 0 4px;">Air Quality Index</p>
+          <div style="display:flex;align-items:baseline;gap:8px;">
+            <span style="font-size:32px;font-weight:900;color:${aqiInfo.color};line-height:1;">${aqiVal}</span>
+            <span style="font-size:11px;font-weight:800;color:${aqiInfo.color};padding:2px 8px;border-radius:99px;background:${aqiInfo.color}20;border:1px solid ${aqiInfo.color}40;">${aqiInfo.text}</span>
           </div>
         </div>
-        <div class="mt-4 pt-3 border-t border-white/5 flex gap-2">
-           <div class="px-2 py-0.5 rounded-full bg-slate-800 text-[8px] font-black uppercase tracking-tighter text-slate-500">ML ANALYZED</div>
-           <div class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-[8px] font-black uppercase tracking-tighter text-emerald-500">OPTIMAL</div>
+
+        <!-- Pollutants Grid -->
+        <div style="padding:12px 16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;border-bottom:1px solid rgba(255,255,255,0.05);">
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">PM₂.₅</p>
+            <p style="font-size:16px;font-weight:900;color:#f97316;margin:0;">${pm25} <span style="font-size:9px;color:#64748b;">µg/m³</span></p>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">PM₁₀</p>
+            <p style="font-size:16px;font-weight:900;color:#fb923c;margin:0;">${pm10} <span style="font-size:9px;color:#64748b;">µg/m³</span></p>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">NO₂</p>
+            <p style="font-size:16px;font-weight:900;color:#a78bfa;margin:0;">${no2} <span style="font-size:9px;color:#64748b;">ppb</span></p>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">SO₂</p>
+            <p style="font-size:16px;font-weight:900;color:#38bdf8;margin:0;">${so2} <span style="font-size:9px;color:#64748b;">ppb</span></p>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">Ozone</p>
+            <p style="font-size:16px;font-weight:900;color:#34d399;margin:0;">${ozone} <span style="font-size:9px;color:#64748b;">ppb</span></p>
+          </div>
+          <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 10px;">
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 3px;">Surface Temp</p>
+            <p style="font-size:16px;font-weight:900;color:#ef4444;margin:0;">${lst}° <span style="font-size:9px;color:#64748b;">LST</span></p>
+          </div>
+        </div>
+
+        <!-- NDVI Footer -->
+        <div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <p style="font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase;margin:0 0 2px;">Vegetation (NDVI)</p>
+            <p style="font-size:14px;font-weight:900;color:#10b981;margin:0;">${ndvi} <span style="font-size:9px;color:#64748b;">index</span></p>
+          </div>
+          <div style="display:flex;gap:4px;">
+            <span style="padding:3px 8px;border-radius:99px;background:#1e293b;font-size:8px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;">ML Analyzed</span>
+            <span style="padding:3px 8px;border-radius:99px;background:#10b98120;border:1px solid #10b98140;font-size:8px;font-weight:800;color:#10b981;text-transform:uppercase;letter-spacing:0.1em;">CSV Data</span>
+          </div>
         </div>
       </div>
     `, {
-      className: 'custom-leaflet-popup',
-      maxWidth: 300
+      className: 'custom-leaflet-popup dark-popup',
+      maxWidth: 320
     });
   };
 
@@ -100,9 +147,16 @@ export default function SatEyeMap({ geoData, activeLayer = 'lst', onWardClick }:
     <div className="h-[500px] w-full relative group">
       <MapContainer key={geoData?.city || 'default'} center={center} zoom={12} className="h-full w-full rounded-xl z-0 shadow-2xl border border-slate-800">
         <ChangeView center={center} />
+        {/* Satellite base layer */}
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          attribution='&copy; <a href="https://www.esri.com">Esri</a>, Maxar, GeoEye, Earthstar Geographics'
+        />
+        {/* Transparent labels overlay on top of satellite */}
+        <TileLayer
+          url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+          attribution=""
+          opacity={0.7}
         />
         {geoData.wards && geoData.wards.map((ward: any, idx: number) => (
           <GeoJSON 

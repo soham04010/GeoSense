@@ -161,7 +161,9 @@ def get_risk_scores(city="Ahmedabad"):
         soil_value = 0.08
         if os.path.exists(SOIL_CSV):
             soil      = pd.read_csv(SOIL_CSV)
-            city_soil = soil[soil['DistrictName'] == 'AHMADABAD']
+            # Normalize: Ahmedabad -> AHMADABAD, etc.
+            city_upper = city.upper().replace("AHMEDABAD", "AHMADABAD")
+            city_soil  = soil[soil['DistrictName'].str.upper() == city_upper]
             if not city_soil.empty:
                 col        = 'Average Soilmoisture Level (at 15cm)'
                 soil_value = float(city_soil[col].mean())

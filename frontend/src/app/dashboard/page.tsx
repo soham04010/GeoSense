@@ -17,10 +17,6 @@ const DynamicMap = dynamic(() => import("@/components/Map"), {
   loading: () => <div className="h-[500px] flex items-center justify-center bg-slate-900/50 rounded-2xl border border-slate-800 animate-pulse text-slate-500 uppercase font-black text-xs tracking-widest">Initializing Geospatial Engine...</div>
 });
 
-const DynamicWardChart = dynamic(() => import("@/components/WardChart"), { 
-  ssr: false,
-  loading: () => <div className="h-[400px] flex items-center justify-center bg-slate-900/50 rounded-2xl border border-slate-800 animate-pulse text-slate-500 uppercase font-black text-xs tracking-widest">Synthesizing Climate Trends...</div>
-});
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -140,35 +136,26 @@ function DashboardContent() {
           <StatBar data={summary} />
         </section>
 
-        <section className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
-          <div className="xl:col-span-7 space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Jurisdictional Heatmap <span className="text-emerald-500/50 ml-1">({currentLayer.toUpperCase()})</span></h2>
-              <div className="flex gap-2">
-                {(['lst', 'ndvi', 'pm25'] as const).map((l) => (
-                  <button 
-                    key={l}
-                    onClick={() => setCurrentLayer(l)}
-                    className={`px-3 py-1 text-[10px] font-black rounded-full transition-all border ${currentLayer === l ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/20' : 'bg-slate-900 border-slate-800 text-slate-500 hover:bg-slate-800'}`}
-                  >
-                    {l.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="bg-slate-900/50 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl relative">
-               <DynamicMap geoData={heatmap} activeLayer={currentLayer} />
+        <section className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Jurisdictional Heatmap <span className="text-emerald-500/50 ml-1">({currentLayer.toUpperCase()})</span></h2>
+            <div className="flex gap-2">
+              {(['lst', 'ndvi', 'pm25'] as const).map((l) => (
+                <button 
+                  key={l}
+                  onClick={() => setCurrentLayer(l)}
+                  className={`px-3 py-1 text-[10px] font-black rounded-full transition-all border ${currentLayer === l ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg shadow-emerald-500/20' : 'bg-slate-900 border-slate-800 text-slate-500 hover:bg-slate-800'}`}
+                >
+                  {l.toUpperCase()}
+                </button>
+              ))}
             </div>
           </div>
-
-          <div className="xl:col-span-5 space-y-4">
-            <div className="flex items-center justify-between px-2">
-              <h2 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Climate Trending</h2>
-              <span className="text-[10px] font-bold text-slate-600 uppercase italic">120-Year CSV Record</span>
-            </div>
-            <DynamicWardChart data={trends} />
+          <div className="bg-slate-900/50 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl relative">
+            <DynamicMap geoData={heatmap} activeLayer={currentLayer} />
           </div>
         </section>
+
 
         <section className="space-y-6">
           <div className="flex items-center gap-4 px-2">
