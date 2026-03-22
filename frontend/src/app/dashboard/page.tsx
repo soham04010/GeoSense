@@ -195,17 +195,64 @@ function DashboardContent() {
     setPdfLoading(true);
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
-      const response = await fetch(`${API_URL}/api/report/generate?city=${city}`, { method: 'POST' });
-      if (!response.ok) throw new Error('Report generation failed');
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${city}_SATEYE_Report.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
+      
+      if (selectedWard) {
+        // Compute precise bounding box from geometry to get perfect ESRI satellite image
+        let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+        try {
+            const coords = selectedWard.geometry.type === 'Polygon' ? selectedWard.geometry.coordinates[0] : selectedWard.geometry.coordinates[0][0];
+            coords.forEach((c: number[]) => {
+              if (c[0] < minLng) minLng = c[0];
+              if (c[0] > maxLng) maxLng = c[0];
+              if (c[1] < minLat) minLat = c[1];
+              if (c[1] > maxLat) maxLat = c[1];
+            });
+        } catch(e) {
+            // fallback bounds
+            minLng = 72.5; minLat = 23.0; maxLng = 72.6; maxLat = 23.1;
+        }
+        
+        const payload = {
+          city: city,
+          ward: selectedWard.ward || "Sector",
+          lat: (minLat + maxLat) / 2,
+          lng: (minLng + maxLng) / 2,
+          bbox: [minLng, minLat, maxLng, maxLat],
+          aqi: activeData.aqi,
+          lst: selectedWard.lst || 42,
+          ndvi: selectedWard.ndvi || 0.25
+        };
+
+        const response = await fetch(`${API_URL}/api/report/sector`, { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) throw new Error('Sector report failed');
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedWard.ward}_SatEye_Analysis.pdf`.replace(/\s+/g, '_');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+      } else {
+        const response = await fetch(`${API_URL}/api/report/generate?city=${city}`, { method: 'POST' });
+        if (!response.ok) throw new Error('City report failed');
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${city}_SATEYE_Report.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (err) {
       console.error('PDF download error:', err);
       alert('Could not generate report. Please try again.');
@@ -320,7 +367,7 @@ function DashboardContent() {
               </>
             ) : (
               <>
-                <span>Report</span>
+                <span>{selectedWard ? "Sector PDF" : "City PDF"}</span>
                 <div className="w-5 h-5 bg-white/20 rounded-full flex items-center justify-center">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
