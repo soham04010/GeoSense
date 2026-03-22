@@ -8,6 +8,8 @@ export interface RiskInfo {
 export interface CitySummary {
   city: string;
   pm25: number;
+  aqi?: number;
+  station?: string;
   is_anomaly: boolean;
   all_pollutants: Record<string, number>;
   warming: number;
@@ -48,6 +50,11 @@ export interface WardData {
   lst: number;
   ndvi: number;
   pm25: number;
+  pm10?: number;
+  no2?: number;
+  so2?: number;
+  ozone?: number;
+  aqi?: number;
   lat: number;
   lng: number;
   geometry: any;

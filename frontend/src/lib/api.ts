@@ -12,6 +12,11 @@ export const getAvailableCities = async () => {
   return response.data;
 };
 
+export const searchCities = async (query: string) => {
+  const response = await axios.get(`${API_URL}/api/city/search?q=${query}`);
+  return response.data;
+};
+
 export const getCityTrends = async (city: string) => {
   const response = await axios.get(`${API_URL}/api/city/${city}/trends`);
   return response.data;
