@@ -28,6 +28,46 @@ router = APIRouter()
 async def get_available_cities():
     return csv_provider.get_available_cities()
 
+@router.get("/api/city/search")
+def search_cities(q: str):
+    """
+    Queries WAQI for real-time location autocomplete suggestions.
+    """
+    try:
+        if not q or len(q) < 2:
+            return []
+            
+        import requests
+        from processing.pollution_fetch import WAQI_TOKEN
+        
+        url = f"https://api.waqi.info/search/?token={WAQI_TOKEN}&keyword={q}"
+        resp = requests.get(url, timeout=5).json()
+        
+        if resp.get("status") == "ok":
+            results = []
+            seen_names = set()
+            for item in resp.get("data", []):
+                name = item.get("station", {}).get("name", "")
+                if name and name not in seen_names:
+                    seen_names.add(name)
+                    # "Maninagar, Ahmedabad, India" -> city="Ahmedabad", full_name="Maninagar, Ahmedabad, India"
+                    parts = [p.strip() for p in name.split(',')]
+                    city_disp = parts[0] if len(parts) == 1 else parts[-2] if len(parts) > 1 else name
+                    
+                    results.append({
+                        "id": item.get("uid"),
+                        "name": str(city_disp).split(' ')[0], # Keep it short for the main title
+                        "full_name": name,
+                        "aqi": item.get("aqi")
+                    })
+            
+            return results[:8]  # top 8 suggestions
+        
+        return []
+    except Exception as e:
+        print(f"City search error: {e}")
+        return []
+
 @router.get("/api/city/{city}/map", response_class=HTMLResponse)
 async def get_city_folium_map(city: str):
     """Returns a Folium HTML map for the city."""
@@ -501,39 +541,40 @@ def get_city_heatmap(city: str):
     Each ward has comprehensive environmental data.
     """
     try:
-        import requests, hashlib
-
+        import hashlib
         from shapely.geometry import shape, box
-        
-        # 1. Geocode city & get true Polygon boundary
-        url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&polygon_geojson=1"
-        headers = {'User-Agent': 'SatEye-App'}
-        response = requests.get(url, headers=headers, timeout=5)
-        res_data = response.json()
-        
+
+        # 1. Use the hardened geocode_city (cached, India-biased) — not raw Nominatim
+        try:
+            lat_c, lng_c = geocode_city(city)
+        except Exception:
+            lat_c, lng_c = 23.0225, 72.5714  # absolute last resort
+
+        # Get city polygon/bbox from Nominatim (we still need the shape for the grid)
+        import requests as req
+        nm_url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&polygon_geojson=1&countrycodes=in"
+        headers = {'User-Agent': 'GeoSense-App'}
+        nm_resp = req.get(nm_url, headers=headers, timeout=6).json()
+
         city_shape = None
-        base_coords = [23.0225, 72.5714]
-        lat_min_bb, lat_max_bb, lng_min_bb, lng_max_bb = 22.94, 23.10, 72.49, 72.65
-        
-        if res_data:
-            # Find the best administrative boundary result
-            for r in res_data:
+        base_coords = [lat_c, lng_c]
+
+        if nm_resp:
+            for r in nm_resp:
                 g_type = r.get("geojson", {}).get("type")
                 if g_type in ("Polygon", "MultiPolygon"):
                     city_shape = shape(r["geojson"])
                     base_coords = [float(r["lat"]), float(r["lon"])]
                     break
-            
-            # Fallback to first result bbox if no polygon found
             if not city_shape:
-                base_coords = [float(res_data[0]["lat"]), float(res_data[0]["lon"])]
-                bbox = res_data[0].get("boundingbox")
-                if bbox:
-                    lat_min_bb, lat_max_bb = float(bbox[0]), float(bbox[1])
-                    lng_min_bb, lng_max_bb = float(bbox[2]), float(bbox[3])
-                    city_shape = box(lng_min_bb, lat_min_bb, lng_max_bb, lat_max_bb)
+                bb = nm_resp[0].get("boundingbox")
+                base_coords = [float(nm_resp[0]["lat"]), float(nm_resp[0]["lon"])]
+                if bb:
+                    city_shape = box(float(bb[2]), float(bb[0]), float(bb[3]), float(bb[1]))
                 else:
-                    city_shape = box(base_coords[1]-0.08, base_coords[0]-0.08, base_coords[1]+0.08, base_coords[0]+0.08)
+                    city_shape = box(lng_c-0.08, lat_c-0.08, lng_c+0.08, lat_c+0.08)
+        else:
+            city_shape = box(lng_c-0.08, lat_c-0.08, lng_c+0.08, lat_c+0.08)
 
         # Get exact bounds from the chosen shape
         lng_min_bb, lat_min_bb, lng_max_bb, lat_max_bb = city_shape.bounds
@@ -571,14 +612,25 @@ def get_city_heatmap(city: str):
                     })
                     cell_id += 1
 
-        # 3. Pull CSV baseline for the city (Fallback/Base values)
-        poll_data = csv_provider.get_city_pollution(city)
-        base_pm25  = poll_data.get("pm25",  55.0)
+        # 3. Get LIVE PM2.5 from WAQI as the true baseline for this city
+        #    This replaces the stale CSV average so sector values start from a real measurement.
+        live_poll = get_live_pollution(city, lat=lat_c, lng=lng_c)
+        if live_poll and live_poll.get("pm25"):
+            live_pm25 = float(live_poll["pm25"])
+            live_source = live_poll.get("station", "WAQI")
+            print(f"Heatmap live PM2.5 for {city}: {live_pm25} µg/m³ from {live_source}")
+        else:
+            # Fall back to CSV baseline if WAQI is unavailable
+            csv_poll  = csv_provider.get_city_pollution(city)
+            live_pm25 = csv_poll.get("pm25", 55.0)
+            print(f"Heatmap using CSV PM2.5 fallback for {city}: {live_pm25}")
+
+        # Pull other pollutants from the averaged CSV data
+        poll_data  = csv_provider.get_city_pollution(city)
         base_no2   = poll_data.get("no2",   28.0)
         base_so2   = poll_data.get("so2",   12.0)
         base_ozone = poll_data.get("ozone", 35.0)
-        # Estimate PM10 from PM2.5 (typical ratio 1.6)
-        base_pm10  = round((base_pm25 or 55.0) * 1.6, 1)
+        base_pm10  = round((live_pm25 or 55.0) * 1.6, 1)
 
         # 4. TRUE GOOGLE EARTH ENGINE REDUCE-REGIONS INTEGRATION
         gee_data_available = False
@@ -649,19 +701,14 @@ def get_city_heatmap(city: str):
                 lst   = vary(42.0, 0.12)
                 ndvi  = round(min(max((ward_hash % 400) / 1000.0, 0.05), 0.5), 2)
 
-            # --- LOCAL SENSOR (POLLUTION) DATA ---
-            pm25  = vary(base_pm25)
+            pm25  = vary(live_pm25)
             pm10  = vary(base_pm10, 0.20)
             no2   = vary(base_no2,  0.30)
             so2   = vary(base_so2,  0.35)
             ozone = vary(base_ozone, 0.20)
 
-            # AQI from PM2.5 (standard linear breakpoint rough estimate)
-            if pm25 <= 12:    aqi = round(pm25 * 4.2)
-            elif pm25 <= 35:  aqi = round(50 + (pm25 - 12) * 2.1)
-            elif pm25 <= 55:  aqi = round(100 + (pm25 - 35) * 0.5)
-            elif pm25 <= 150: aqi = round(150 + (pm25 - 55) * 1.6)
-            else:             aqi = round(250 + (pm25 - 150))
+            # Use the standard pm25_to_aqi() — same formula as frontend calcAqi()
+            aqi = pm25_to_aqi(float(pm25))
 
             coords = feature["geometry"]["coordinates"][0]
             avg_lng = sum(p[0] for p in coords[:-1]) / (len(coords) - 1)

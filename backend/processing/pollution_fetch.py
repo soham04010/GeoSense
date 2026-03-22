@@ -62,26 +62,38 @@ def get_live_pollution(city: str, lat: float = None, lng: float = None):
                 if station_geo and len(station_geo) == 2:
                     s_lat, s_lon = float(station_geo[0]), float(station_geo[1])
                     distance_deg = ((s_lat - lat) ** 2 + (s_lon - lng) ** 2) ** 0.5
-                    if distance_deg > 1.5:   # more than ~150 km off
+                    if distance_deg > 1.0:   # more than ~110 km off
                         print(
                             f"WARNING: WAQI geo-station '{feed_data.get('city', {}).get('name')}' "
                             f"is {distance_deg:.2f}° away from {city}. Trying name search instead."
                         )
                         feed_data = None   # fall through to name search
 
-        # ── Strategy 2: city-name search, closest-matching station ─────
+        # ── Strategy 2: city-name search, pick nearest by geo ─────────
         if feed_data is None:
             search_url = f"https://api.waqi.info/search/?token={WAQI_TOKEN}&keyword={city}"
             s_resp = requests.get(search_url, timeout=10).json()
             if s_resp.get("status") == "ok" and s_resp.get("data"):
                 stations = s_resp["data"]
-                city_lower = city.lower()
-                # Prefer stations whose name contains the city name
-                matched = [
-                    s for s in stations
-                    if city_lower in s.get("station", {}).get("name", "").lower()
-                ]
-                best = matched[0] if matched else stations[0]
+
+                if lat is not None and lng is not None:
+                    # Pick the closest station by straight-line geo distance
+                    # WAQI search station.geo is [lat, lon]
+                    def _dist(s):
+                        geo = s.get("station", {}).get("geo", [])
+                        try:
+                            return ((float(geo[0]) - lat) ** 2 + (float(geo[1]) - lng) ** 2) ** 0.5
+                        except Exception:
+                            return float("inf")
+                    best = min(stations, key=_dist)
+                else:
+                    # No coords: prefer stations whose URL contains 'india'
+                    india_stations = [
+                        s for s in stations
+                        if "india" in s.get("station", {}).get("url", "").lower()
+                    ]
+                    best = india_stations[0] if india_stations else stations[0]
+
                 uid = best["uid"]
                 feed_resp = requests.get(
                     f"https://api.waqi.info/feed/@{uid}/?token={WAQI_TOKEN}", timeout=10
