@@ -12,9 +12,9 @@ from processing.ml_analysis import (
 from processing.gis_utils import create_folium_map, get_map_html
 from processing.gee_fetch import (
     fetch_lst_data, fetch_ndvi_data, fetch_no2_data, 
-    initialize_gee, get_image_mean, get_city_geometry
+    initialize_gee, get_image_mean, get_city_geometry, geocode_city
 )
-from processing.pollution_fetch import get_live_pollution
+from processing.pollution_fetch import get_live_pollution, pm25_to_aqi
 from datetime import datetime, timedelta
 
 # Initialize GEE at startup
@@ -47,23 +47,27 @@ def get_city_summary(city: str):
     Returns a live environmental summary using GEE and ML with DB caching.
     """
     try:
-        # 1. Get Coordinates (Nominatim or GEE)
+        # 1. Get Coordinates — use the hardened geocode_city() with cache
         geom = None
         lat_center, lng_center = None, None
         try:
+            lat_center, lng_center = geocode_city(city)
             geom = get_city_geometry(city)
-            center_info = geom.centroid().coordinates().getInfo()
-            lng_center, lat_center = center_info
-        except Exception:
-            # Robust Nominatim Fallback
-            import requests as req
-            n_url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
-            headers = {'User-Agent': 'SatEye-App'}
-            n_resp = req.get(n_url, headers=headers, timeout=5).json()
-            if n_resp:
-                lat_center, lng_center = float(n_resp[0]["lat"]), float(n_resp[0]["lon"])
-            else:
-                lat_center, lng_center = 23.0225, 72.5714 # Fallback to Ahmedabad coords
+        except Exception as geo_err:
+            print(f"Geocoding failed for '{city}': {geo_err}")
+            # Last-resort: Nominatim without country restriction
+            try:
+                import requests as req
+                n_url = f"https://nominatim.openstreetmap.org/search?q={city}&format=json&limit=1"
+                headers = {'User-Agent': 'GeoSense-App'}
+                n_resp = req.get(n_url, headers=headers, timeout=5).json()
+                if n_resp:
+                    lat_center, lng_center = float(n_resp[0]["lat"]), float(n_resp[0]["lon"])
+                else:
+                    lat_center, lng_center = 23.0225, 72.5714  # Ahmedabad only as absolute last resort
+                    print(f"WARNING: Could not resolve '{city}', using Ahmedabad coords as emergency fallback")
+            except Exception:
+                lat_center, lng_center = 23.0225, 72.5714
 
         # 2. Check Cache for Satellite stats
         lst_val = get_cached_gee_value(city, "LST")
@@ -114,7 +118,7 @@ def get_city_summary(city: str):
         # 4. PM2.5 relies on Ground Sensors (WAQI API) because satellites measure column aerosols
         live_poll = get_live_pollution(city, lat=lat_center, lng=lng_center)
         pm25_val = float(live_poll.get("pm25") or 52.0) if live_poll else 52.0
-        aqi_live = float(live_poll.get("aqi") or (pm25_val * 1.5)) if live_poll else float(pm25_val * 1.5)
+        aqi_live = float(live_poll.get("aqi") or pm25_to_aqi(pm25_val)) if live_poll else pm25_to_aqi(pm25_val)
         
         sm_data = csv_provider.get_district_soil_moisture(city)
         sm_val = sm_data.get("sm_percentage") or 12.5

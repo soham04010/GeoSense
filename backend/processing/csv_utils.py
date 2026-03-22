@@ -63,24 +63,24 @@ class CSVDataProvider:
     def get_city_pollution(self, city):
         df = self.pollution_df
         if df is not None:
-            city_data = df[df['city_normalized'] == city.lower()]
+            city_data = df[df['city_normalized'] == city.strip().lower()]
             if not city_data.empty:
-                # Group by pollutant and get latest or avg
-                result = {}
+                # Collect all numeric values per pollutant across all stations,
+                # then average them — avoids single bad-station bias.
+                from collections import defaultdict
+                buckets: dict = defaultdict(list)
                 for _, row in city_data.iterrows():
-                    p_id = row['pollutant_id']
-                    # Use avg if available, else max/min
-                    val = row['pollutant_avg']
-                    if pd.isna(val) or val == 'NA':
-                        val = row['pollutant_max']
-                    if pd.isna(val) or val == 'NA':
-                        val = row['pollutant_min']
-                    
-                    try:
-                        result[p_id.lower().replace('.', '')] = float(val)
-                    except:
-                        continue
-                return result
+                    p_id = str(row['pollutant_id']).strip()
+                    key  = p_id.lower().replace('.', '')   # e.g. "PM2.5" → "pm25"
+                    for col in ('pollutant_avg', 'pollutant_max', 'pollutant_min'):
+                        val = row.get(col)
+                        if val is not None and str(val).strip() not in ('', 'NA', 'nan'):
+                            try:
+                                buckets[key].append(float(val))
+                                break   # prefer avg > max > min
+                            except (ValueError, TypeError):
+                                continue
+                return {k: round(sum(v) / len(v), 2) for k, v in buckets.items() if v}
         return {}
 
     def get_district_soil_moisture(self, district):

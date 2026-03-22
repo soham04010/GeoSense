@@ -1,17 +1,22 @@
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, HRFlowable, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 from reportlab.lib import colors
 import os
 import requests
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "data"))
 
+
 def download_satellite_image(bbox, filepath):
-    url = f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}&bboxSR=4326&size=800,500&imageSR=4326&format=png&f=image"
+    url = (
+        f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
+        f"?bbox={bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
+        f"&bboxSR=4326&size=800,500&imageSR=4326&format=png&f=image"
+    )
     try:
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
@@ -22,162 +27,232 @@ def download_satellite_image(bbox, filepath):
         print(f"Failed to download satellite image: {e}")
     return False
 
+
 def generate_sector_pdf(payload: dict):
     try:
         city = payload.get("city", "Unknown")
         ward = payload.get("ward", "Sector")
         bbox = payload.get("bbox", [72.5, 23.0, 72.6, 23.1])
-        aqi = payload.get("aqi", 0)
-        lst = payload.get("lst", 0)
+        aqi  = payload.get("aqi", 0)
+        lst  = payload.get("lst", 0)
         ndvi = payload.get("ndvi", 0)
-        
+
+        # ── Risk assessment ────────────────────────────────────────────
         risks = []
-        if aqi > 100: risks.append(["High Particulate Matter", f"AQI: {aqi}", "CRITICAL", "Restricted outdoor activities & dust control."])
-        elif aqi > 50: risks.append(["Moderate Air Quality", f"AQI: {aqi}", "WARNING", "Acceptable for public. Monitor hotspots."])
-        else: risks.append(["Good Air Quality", f"AQI: {aqi}", "SAFE", "No immediate action required."])
-        
-        if lst > 42: risks.append(["Severe Urban Heat Island", f"LST: {lst}°C", "CRITICAL", "Deploy cooling infrastructure, mandate cool roofs."])
-        elif lst > 38: risks.append(["Elevated Surface Temp", f"LST: {lst}°C", "WARNING", "Plant shade trees in open concrete areas."])
-        else: risks.append(["Normal Surface Temp", f"LST: {lst}°C", "SAFE", "Maintain current canopy cover."])
-        
-        if ndvi < 0.2: risks.append(["Critical Lack of Vegetation", f"NDVI: {ndvi}", "CRITICAL", "Urgent afforestation and park development needed."])
-        elif ndvi < 0.4: risks.append(["Sparse Vegetative Cover", f"NDVI: {ndvi}", "WARNING", "Increase roadside planting."])
-        else: risks.append(["Healthy Vegetation Density", f"NDVI: {ndvi}", "SAFE", "Continue green preservation rules."])
+        if aqi > 100:   risks.append(["High Particulate Matter",     f"AQI: {aqi}",    "CRITICAL", "Restrict outdoor activities and enforce dust control measures."])
+        elif aqi > 50:  risks.append(["Moderate Air Quality",         f"AQI: {aqi}",    "WARNING",  "Acceptable for general public. Monitor high-exposure hotspots."])
+        else:           risks.append(["Good Air Quality",              f"AQI: {aqi}",    "SAFE",     "No immediate action required. Continue routine monitoring."])
 
-        safe_ward = "".join([c if c.isalnum() else "_" for c in ward])
+        if lst > 42:    risks.append(["Severe Urban Heat Island",     f"LST: {lst} C",  "CRITICAL", "Deploy cooling infrastructure; mandate cool-roof installations."])
+        elif lst > 38:  risks.append(["Elevated Surface Temperature",  f"LST: {lst} C",  "WARNING",  "Plant shade trees in open concrete and paved areas."])
+        else:           risks.append(["Normal Surface Temperature",    f"LST: {lst} C",  "SAFE",     "Maintain current canopy cover and green buffer zones."])
+
+        if ndvi < 0.2:  risks.append(["Critical Vegetation Deficit",  f"NDVI: {ndvi}",  "CRITICAL", "Urgent afforestation and public park development required."])
+        elif ndvi < 0.4:risks.append(["Sparse Vegetative Cover",       f"NDVI: {ndvi}",  "WARNING",  "Increase roadside and median planting programmes."])
+        else:           risks.append(["Healthy Vegetation Density",    f"NDVI: {ndvi}",  "SAFE",     "Continue green-space preservation and maintenance rules."])
+
+        from datetime import date
+        report_date = date.today().strftime("%d %B %Y")
+
+        safe_ward  = "".join([c if c.isalnum() else "_" for c in ward])
         output_pdf = os.path.join(DATA_DIR, f"{safe_ward}_Report.pdf")
-        img_path = os.path.join(DATA_DIR, f"{safe_ward}_sat.png")
-        has_image = download_satellite_image(bbox, img_path)
+        img_path   = os.path.join(DATA_DIR, f"{safe_ward}_sat.png")
+        has_image  = download_satellite_image(bbox, img_path)
 
-        doc = SimpleDocTemplate(output_pdf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=12*mm)
-        styles = getSampleStyleSheet()
+        # ── Palette (light theme) ──────────────────────────────────────
+        C_WHITE     = colors.white
+        C_BRAND     = colors.HexColor('#0F4C81')
+        C_ACCENT    = colors.HexColor('#00A878')
+        C_BORDER    = colors.HexColor('#E2E8F0')
+        C_TEXT      = colors.HexColor('#1E293B')
+        C_MUTED     = colors.HexColor('#64748B')
 
-        # Styles: Lighter theme
-        h_title = ParagraphStyle('HT', fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#1e3a8a'), alignment=TA_CENTER)
-        h_sub = ParagraphStyle('HS', fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#64748b'), alignment=TA_CENTER)
-        
-        sec_title = ParagraphStyle('ST', fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=8)
-        body = ParagraphStyle('BD', fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#334155'), leading=14)
-        
-        metric_label = ParagraphStyle('ML', fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#475569'), alignment=TA_CENTER)
+        C_CRIT_T    = colors.HexColor('#DC2626')
+        C_CRIT_BG   = colors.HexColor('#FEF2F2')
+        C_CRIT_BD   = colors.HexColor('#FECACA')
+        C_WARN_T    = colors.HexColor('#D97706')
+        C_WARN_BG   = colors.HexColor('#FFFBEB')
+        C_WARN_BD   = colors.HexColor('#FDE68A')
+        C_SAFE_T    = colors.HexColor('#059669')
+        C_SAFE_BG   = colors.HexColor('#ECFDF5')
+        C_SAFE_BD   = colors.HexColor('#A7F3D0')
+
+        W = A4[0] - 28*mm
+
+        doc = SimpleDocTemplate(
+            output_pdf, pagesize=A4,
+            leftMargin=14*mm, rightMargin=14*mm,
+            topMargin=12*mm, bottomMargin=12*mm,
+        )
 
         story = []
 
-        # 1. Light Header Table
-        header_data = [
-            [Paragraph("SATEYE URBAN INTELLIGENCE PLATFORM", h_title)],
-            [Paragraph(f"MUNICIPAL WARD ACTION PLAN — {ward.upper()}, {city.upper()}", h_sub)]
-        ]
-        header_table = Table(header_data, colWidths=[186*mm])
-        header_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 12),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        # ── 1. HEADER ──────────────────────────────────────────────────
+        def ps(name, font='Helvetica', size=10, color=None, align=TA_LEFT, leading=None, **kw):
+            return ParagraphStyle(
+                name, fontName=font, fontSize=size,
+                textColor=color or C_TEXT,
+                alignment=align,
+                leading=leading or (size * 1.4),
+                **kw,
+            )
+
+        hdr = Table([
+            [
+                Paragraph(f'<b>{city.upper()}</b>',
+                          ps('hc', 'Helvetica-Bold', 20, colors.white)),
+                Paragraph(report_date,
+                          ps('hd', size=9, color=colors.HexColor('#93C5FD'), align=TA_RIGHT)),
+            ],
+            [
+                Paragraph(f'Municipal Ward Report  |  {ward}',
+                          ps('hs', size=9.5, color=colors.HexColor('#BFDBFE'))),
+                Paragraph('GeoSense Sector Intelligence',
+                          ps('hg', size=8, color=colors.HexColor('#7EA9CB'), align=TA_RIGHT)),
+            ],
+        ], colWidths=[W * 0.65, W * 0.35])
+        hdr.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0), (-1, -1), C_BRAND),
+            ('TOPPADDING',    (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 14),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 14),
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
         ]))
-        story.append(header_table)
-        story.append(Spacer(1, 15))
+        story.append(hdr)
 
-        # 2. Hero Section: Image + Metric Blocks Side-by-Side
-        def get_theme_colors(val, thresholds, inverse=False):
-            # Returns (bg_color, text_color)
+        # Accent strip
+        strip_wrap = Table([[Table([['']], colWidths=[W + 28*mm], rowHeights=[3])]], colWidths=[W])
+        strip_wrap.setStyle(TableStyle([('LEFTPADDING',(0,0),(-1,-1),-14*mm),('RIGHTPADDING',(0,0),(-1,-1),-14*mm),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)]))
+        inner_strip = strip_wrap._cellvalues[0][0]
+        inner_strip.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),C_ACCENT),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0)]))
+        story.append(strip_wrap)
+        story.append(Spacer(1, 8*mm))
+
+        # ── 2. METRIC CARDS ─────────────────────────────────────────────
+        def mc_colors(val, warn, crit, inverse=False):
             if inverse:
-                if val < thresholds[0]: return (colors.HexColor('#fee2e2'), colors.HexColor('#991b1b')) # Red
-                if val < thresholds[1]: return (colors.HexColor('#fff7ed'), colors.HexColor('#c2410c')) # Orange
-                return (colors.HexColor('#dcfce7'), colors.HexColor('#166534')) # Green
+                if val < crit: return C_CRIT_T, C_CRIT_BG, C_CRIT_BD, 'CRITICAL'
+                if val < warn: return C_WARN_T, C_WARN_BG, C_WARN_BD, 'WARNING'
+                return C_SAFE_T, C_SAFE_BG, C_SAFE_BD, 'SAFE'
             else:
-                if val > thresholds[1]: return (colors.HexColor('#fee2e2'), colors.HexColor('#991b1b')) # Red
-                if val > thresholds[0]: return (colors.HexColor('#fff7ed'), colors.HexColor('#c2410c')) # Orange
-                return (colors.HexColor('#dcfce7'), colors.HexColor('#166534')) # Green
+                if val > crit: return C_CRIT_T, C_CRIT_BG, C_CRIT_BD, 'CRITICAL'
+                if val > warn: return C_WARN_T, C_WARN_BG, C_WARN_BD, 'WARNING'
+                return C_SAFE_T, C_SAFE_BG, C_SAFE_BD, 'SAFE'
 
-        c_aqi_bg, c_aqi_text = get_theme_colors(aqi, [50, 100])
-        c_lst_bg, c_lst_text = get_theme_colors(lst, [38, 42])
-        c_ndv_bg, c_ndv_text = get_theme_colors(ndvi, [0.2, 0.4], True)
+        aqi_tc, aqi_bg, aqi_bd, aqi_lbl = mc_colors(aqi,  50,  100)
+        lst_tc, lst_bg, lst_bd, lst_lbl = mc_colors(lst,  38,   42)
+        ndv_tc, ndv_bg, ndv_bd, ndv_lbl = mc_colors(ndvi, 0.4, 0.2, True)
 
-        def make_metric_box(label, val, unit, bg_color, text_color):
-            ml = ParagraphStyle('MLBox', fontName='Helvetica-Bold', fontSize=8, textColor=text_color, alignment=TA_CENTER, spaceAfter=4)
-            mv = ParagraphStyle('MVBox', fontName='Helvetica-Bold', fontSize=20, leading=22, textColor=text_color, alignment=TA_CENTER)
-            d = [
-                [Paragraph(label.upper(), ml)],
-                [Paragraph(f"{val} <font size=9>{unit}</font>", mv)]
-            ]
-            t = Table(d, colWidths=[42*mm])
+        CARD_W = (W - 4*mm) / 3
+
+        def metric_card(label, value, unit, tc, bg, bd, status):
+            t = Table([
+                [Paragraph(label, ps(f'ml{label}', 'Helvetica-Bold', 7.5, C_MUTED, TA_CENTER))],
+                [Paragraph(f'<b>{value}</b>',
+                           ps(f'mv{label}', 'Helvetica-Bold', 22, tc, TA_CENTER, leading=26))],
+                [Paragraph(unit, ps(f'mu{label}', size=7.5, color=C_MUTED, align=TA_CENTER))],
+                [Paragraph(f'<b>{status}</b>',
+                           ps(f'ms{label}', 'Helvetica-Bold', 7.5, tc, TA_CENTER))],
+            ], colWidths=[CARD_W])
             t.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,-1), bg_color),
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 12),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-                ('ROUNDEDCORNERS', [4, 4, 4, 4]),
-                ('BOX', (0,0), (-1,-1), 0.5, text_color)
+                ('BACKGROUND',    (0, 0), (-1, -1), bg),
+                ('BOX',           (0, 0), (-1, -1), 1, bd),
+                ('TOPPADDING',    (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
             ]))
             return t
 
-        metrics_column = [
-            [make_metric_box("PM2.5 AQI", aqi, "", c_aqi_bg, c_aqi_text)],
-            [make_metric_box("SURFACE HEAT", lst, "°C", c_lst_bg, c_lst_text)],
-            [make_metric_box("VEGETATION", ndvi, "idx", c_ndv_bg, c_ndv_text)]
-        ]
-        metrics_t = Table(metrics_column)
-        metrics_t.setStyle(TableStyle([
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
+        metrics_row = Table([[
+            metric_card('AQI',          str(aqi),   'air quality index', aqi_tc, aqi_bg, aqi_bd, aqi_lbl),
+            metric_card('SURFACE TEMP', f'{lst} C', 'land surface',      lst_tc, lst_bg, lst_bd, lst_lbl),
+            metric_card('NDVI',         str(ndvi),  'vegetation index',  ndv_tc, ndv_bg, ndv_bd, ndv_lbl),
+        ]], colWidths=[CARD_W + 2*mm] * 3)
+        metrics_row.setStyle(TableStyle([
+            ('LEFTPADDING',   (0, 0), (-1, -1), 1),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 1),
+            ('TOPPADDING',    (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
         ]))
+        story.append(metrics_row)
+        story.append(Spacer(1, 6*mm))
+
+        # ── 3. SATELLITE IMAGE ──────────────────────────────────────────
+        def section_hdr(text):
+            t = Table([[Paragraph(text, ps('sh'+text[:3], 'Helvetica-Bold', 10, C_BRAND))]],
+                      colWidths=[W])
+            t.setStyle(TableStyle([
+                ('BACKGROUND',    (0, 0), (-1, -1), colors.HexColor('#EFF6FF')),
+                ('TOPPADDING',    (0, 0), (-1, -1), 7),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+                ('LEFTPADDING',   (0, 0), (-1, -1), 10),
+                ('LINEBELOW',     (0, 0), (-1, 0),  1.5, C_ACCENT),
+                ('LINEABOVE',     (0, 0), (-1, 0),  0.5, C_BORDER),
+            ]))
+            return t
 
         if has_image:
-            sat_img = Image(img_path, width=135*mm, height=95*mm)
-            hero_data = [[sat_img, metrics_t]]
-            hero_table = Table(hero_data, colWidths=[140*mm, 46*mm])
-            hero_table.setStyle(TableStyle([
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('LEFTPADDING', (0,0), (-1,-1), 0),
-                ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ]))
-            story.append(Paragraph("SATELLITE OBSERVATION: HIGH-RESOLUTION WARD SCAN", sec_title))
-            story.append(hero_table)
-            story.append(Spacer(1, 15))
+            story.append(section_hdr('SATELLITE OBSERVATION — HIGH-RESOLUTION WARD SCAN'))
+            story.append(Spacer(1, 4*mm))
+            sat_img = Image(img_path, width=W, height=int(W * 0.55))
+            story.append(sat_img)
+            story.append(Spacer(1, 6*mm))
 
-        # 3. Formatted Action Plan Table
-        story.append(Paragraph("AI-DRIVEN DIAGNOSIS & CIVIC ACTION PLAN", sec_title))
-        
-        table_style_BD = ParagraphStyle('TBD', fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#334155'))
-        table_style_BDBold = ParagraphStyle('TBDB', fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
-        
-        action_data = [["Threat Sector", "Observed", "Status", "Urban Planning Directive"]]
-        for r in risks:
-            p_threat = Paragraph(r[0], table_style_BDBold)
-            p_obs = Paragraph(r[1], table_style_BD)
-            
-            status_color = colors.HexColor('#10b981') if r[2] == 'SAFE' else colors.HexColor('#f59e0b') if r[2] == 'WARNING' else colors.HexColor('#ef4444')
-            p_status = Paragraph(f"<font color={status_color.hexval()}>{r[2]}</font>", table_style_BDBold)
-            p_dir = Paragraph(r[3], table_style_BD)
-            action_data.append([p_threat, p_obs, p_status, p_dir])
+        # ── 4. ACTION PLAN TABLE ────────────────────────────────────────
+        story.append(section_hdr('AI-DRIVEN DIAGNOSIS & CIVIC ACTION PLAN'))
+        story.append(Spacer(1, 5*mm))
 
-        action_table = Table(action_data, colWidths=[40*mm, 25*mm, 25*mm, 96*mm])
+        th_s = ps('th', 'Helvetica-Bold', 8, C_MUTED, TA_LEFT)
+        td_b = ps('tdb', 'Helvetica-Bold', 9, C_TEXT)
+        td_o = ps('tdo', size=8.5, color=C_MUTED, leading=13)
+
+        action_data = [[Paragraph('Threat Sector', th_s), Paragraph('Observed', th_s),
+                        Paragraph('Status', th_s),         Paragraph('Urban Planning Directive', th_s)]]
+
+        for row in risks:
+            sc = C_CRIT_T if row[2] == 'CRITICAL' else C_WARN_T if row[2] == 'WARNING' else C_SAFE_T
+            action_data.append([
+                Paragraph(row[0], td_b),
+                Paragraph(row[1], ps(f'ob{row[0][:4]}', size=8.5, color=C_TEXT, align=TA_CENTER)),
+                Paragraph(f'<b>{row[2]}</b>', ps(f'st{row[0][:4]}', 'Helvetica-Bold', 8, sc, TA_CENTER)),
+                Paragraph(row[3], td_o),
+            ])
+
+        action_table = Table(action_data, colWidths=[48*mm, 22*mm, 22*mm, W - 92*mm])
         action_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f8fafc')),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor('#64748b')),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,0), 8),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
-            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
-            ('TOPPADDING', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('BACKGROUND',     (0, 0),  (-1, 0),  colors.HexColor('#F1F5F9')),
+            ('TOPPADDING',     (0, 0),  (-1, 0),  7),
+            ('BOTTOMPADDING',  (0, 0),  (-1, 0),  7),
+            ('ROWBACKGROUNDS', (0, 1),  (-1, -1), [C_WHITE, colors.HexColor('#F8FAFC')]),
+            ('TOPPADDING',     (0, 1),  (-1, -1), 9),
+            ('BOTTOMPADDING',  (0, 1),  (-1, -1), 9),
+            ('ALIGN',          (0, 0),  (-1, -1), 'LEFT'),
+            ('VALIGN',         (0, 0),  (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING',    (0, 0),  (-1, -1), 7),
+            ('RIGHTPADDING',   (0, 0),  (-1, -1), 7),
+            ('LINEBELOW',      (0, 0),  (-1, -1), 0.5, C_BORDER),
+            ('BOX',            (0, 0),  (-1, -1), 0.5, C_BORDER),
         ]))
-        
         story.append(action_table)
-        story.append(Spacer(1, 25))
+        story.append(Spacer(1, 10*mm))
 
-        # 4. Footer
-        foot = ParagraphStyle('FT', fontName='Helvetica', fontSize=8, textColor=colors.HexColor('#94a3b8'), alignment=TA_CENTER)
-        story.append(Paragraph("Generated by SatEye Intelligence Engine • Harmonized Earth Observation Data (MODIS/Sentinel) • For Official Civic Decision-Making", foot))
+        # ── 5. FOOTER ───────────────────────────────────────────────────
+        footer = Table([[
+            Paragraph(f'GeoSense Intelligence Engine  |  {ward}, {city}  |  {report_date}',
+                      ps('fl', 'Helvetica-Bold', 7.5, C_BRAND)),
+            Paragraph('Data: MODIS / Sentinel / ArcGIS  |  For Official Civic Use Only',
+                      ps('fr', size=7.5, color=C_MUTED, align=TA_RIGHT)),
+        ]], colWidths=[W / 2, W / 2])
+        footer.setStyle(TableStyle([
+            ('TOPPADDING',    (0, 0), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('LINEABOVE',     (0, 0), (-1, -1), 1, C_BORDER),
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        story.append(footer)
 
         doc.build(story)
-        
+
         if has_image and os.path.exists(img_path):
             os.remove(img_path)
 
