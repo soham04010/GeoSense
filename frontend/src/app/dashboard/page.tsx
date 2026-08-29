@@ -2,9 +2,9 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useRef } from "react";
 import dynamic from "next/dynamic";
-import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap, getAvailableCities, getCityInsights } from "@/lib/api";
+import { getCitySummary, getCityTrends, getCityAnomalies, getCityHeatmap, getAvailableCities, getCityInsights, searchCities } from "@/lib/api";
 import { CitySummary, CityTrends, CityAnomalies, CityHeatmap } from "@/types";
 
 import ReportDownload from "@/components/ReportDownload";
@@ -143,6 +143,48 @@ function DashboardContent() {
   const [currentLayer, setCurrentLayer] = useState<'lst' | 'ndvi' | 'pm25'>('pm25');
   const [selectedWard, setSelectedWard] = useState<any>(null);
   const [insights, setInsights] = useState<any>(null);
+  
+  // Autocomplete state
+  const [searchQuery, setSearchQuery] = useState(city);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced Search Handler
+  useEffect(() => {
+    if (searchQuery === city || searchQuery.length < 2) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await searchCities(searchQuery);
+        setSuggestions(results);
+        setShowDropdown(true);
+      } catch (err) {
+        console.error("Search failed:", err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400); // 400ms debounce
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery, city]);
 
   useEffect(() => {
     const fetchCities = async () => {
@@ -186,6 +228,8 @@ function DashboardContent() {
 
   const handleCityChange = (newCity: string) => {
     if (newCity) {
+      setSearchQuery(newCity);
+      setShowDropdown(false);
       router.push(`/dashboard?city=${newCity}`);
     }
   };
@@ -274,25 +318,38 @@ function DashboardContent() {
     setSelectedWard(ward);
   };
 
+  // India CPCB / US EPA PM2.5 → AQI (matches backend pm25_to_aqi)
+  const calcAqi = (pm: number): number => {
+    if (!pm || pm <= 0) return 0;
+    if (pm <= 12.0)  return Math.round(((50-0)/(12-0))*(pm-0)+0);
+    if (pm <= 35.4)  return Math.round(((100-51)/(35.4-12.1))*(pm-12.1)+51);
+    if (pm <= 55.4)  return Math.round(((150-101)/(55.4-35.5))*(pm-35.5)+101);
+    if (pm <= 150.4) return Math.round(((200-151)/(150.4-55.5))*(pm-55.5)+151);
+    if (pm <= 250.4) return Math.round(((300-201)/(250.4-150.5))*(pm-150.5)+201);
+    if (pm <= 350.4) return Math.round(((400-301)/(350.4-250.5))*(pm-250.5)+301);
+    return Math.round(((500-401)/(500.4-350.5))*(pm-350.5)+401);
+  };
+
   const activeData = selectedWard ? {
     name: selectedWard.ward,
     pm25: selectedWard.pm25,
     pm10: selectedWard.pm10,
-    co: Math.round((selectedWard.pm25 * 5.2)), // Approximated
+    co: Math.round((selectedWard.pm25 * 5.2)),
     so2: selectedWard.so2,
     no2: selectedWard.no2,
     ozone: selectedWard.ozone,
-    aqi: selectedWard.aqi || Math.round(selectedWard.pm25 * 1.5)
+    aqi: selectedWard.aqi ?? calcAqi(selectedWard.pm25)
   } : {
     name: city,
     pm25: summary?.pm25,
     pm10: summary?.all_pollutants?.PM10 || Math.round((summary?.pm25||40)*1.4),
-    co: 476, // fallback
+    co: 476,
     so2: summary?.all_pollutants?.SO2 || 9,
     no2: summary?.all_pollutants?.NO2 || 23,
     ozone: summary?.all_pollutants?.Ozone || 42,
-    aqi: Math.round((summary?.pm25||42)*1.5)
+    aqi: summary?.aqi ?? calcAqi(summary?.pm25 ?? 42)
   };
+
 
   const status = getAQIStatus(activeData.aqi || 50);
 
@@ -308,26 +365,57 @@ function DashboardContent() {
       <div className="absolute top-4 inset-x-0 flex justify-center z-[500] pointer-events-none">
         <div className="pointer-events-auto flex items-center bg-[#f2f4f7]/80 backdrop-blur-[2rem] h-[48px] rounded-[1.7em] shadow-sm border border-white/50 px-4 min-w-[32rem] sm:min-w-[42rem] transition-all hover:border-blue-400 hover:shadow-md">
           {/* Search Input Box */}
-          <div className="flex-1 flex items-center relative h-full">
+          <div className="flex-1 flex items-center relative h-full" ref={searchRef}>
             <svg className="w-[1.1rem] h-[1.1rem] text-slate-500 shrink-0 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            <select 
-              value={city}
-              onChange={(e) => handleCityChange(e.target.value)}
-              className="w-full bg-transparent border-none text-[#495057] text-[1.1rem] font-medium px-4 focus:outline-none focus:ring-0 appearance-none cursor-pointer h-full"
-            >
-              <option value="" disabled>Search City...</option>
-              {availableCities.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+            <input 
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => {
+                if (suggestions.length > 0) setShowDropdown(true);
+                // Select all text on focus for easy typing
+                e.target.select();
+              }}
+              placeholder="Search any global city..."
+              className="w-full bg-transparent border-none text-[#495057] text-[1.1rem] font-medium px-4 focus:outline-none focus:ring-0 appearance-none h-full placeholder:text-slate-400"
+            />
+            {isSearching && (
+              <svg className="w-4 h-4 text-blue-500 animate-spin absolute right-12" viewBox="0 0 24 24" fill="none">
+                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            )}
+            
+            {/* Find me button (kept for future GPS integration) */}
             <button className="p-1 rounded-full hover:bg-black/5 transition-colors text-blue-500 mr-2 shrink-0">
               <svg className="w-[1.2rem] h-[1.2rem]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                  <circle cx="12" cy="12" r="6" />
                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v4m0 12v4M2 12h4m12 0h4" />
               </svg>
             </button>
+
+            {/* Dropdown Suggestions */}
+            {showDropdown && suggestions.length > 0 && (
+              <div className="absolute top-[52px] left-0 w-[120%] bg-white/95 backdrop-blur shadow-xl border border-slate-200 rounded-[1.2rem] overflow-hidden z-[1000] max-h-[300px] overflow-y-auto">
+                <ul className="py-2">
+                  {suggestions.map((s, i) => (
+                    <li 
+                      key={s.id || i}
+                      onClick={() => handleCityChange(s.name)}
+                      className="px-5 py-2.5 hover:bg-blue-50 cursor-pointer flex flex-col items-start transition-colors border-b border-transparent hover:border-blue-100 last:border-b-0"
+                    >
+                      <div className="flex justify-between w-full items-center">
+                        <span className="font-bold text-slate-800 text-[1.05rem]">{s.name}</span>
+                        {s.aqi && <span className="text-[0.8rem] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">AQI {s.aqi}</span>}
+                      </div>
+                      <span className="text-[0.8rem] text-slate-500 mt-0.5 truncate w-full">{s.full_name}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           <div className="h-[24px] w-px bg-slate-300 mx-2"></div>
@@ -413,7 +501,9 @@ function DashboardContent() {
                  currentLayer === 'pm25' ? 'text-blue-500' : 
                  currentLayer === 'lst' ? 'text-red-500' : 'text-green-500'
               }`}>{activeData.name}</h3>
-              <p className="text-[#9ca5ad] text-[0.85rem] font-medium leading-tight mt-0.5">{city}, Gujarat, India</p>
+              <p className="text-[#9ca5ad] text-[0.85rem] font-medium leading-tight mt-0.5">
+                {summary?.station ? [...new Set(summary.station.split(',').map(s=>s.trim()))].slice(-2).join(', ') : `${city}, Selected Region`}
+              </p>
             </div>
           </div>
         </div>
