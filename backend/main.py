@@ -5,6 +5,8 @@ load_dotenv()  # Load .env before anything else
 
 from routes import city, report, copilot
 
+from database import initialize_spatial_db
+
 app = FastAPI(
     title="SatEye API", 
     description="Electronic Health Record & Environmental Satellite Intelligence"
@@ -13,13 +15,15 @@ app = FastAPI(
 # Allow frontend to communicate with backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def on_startup():
+    initialize_spatial_db()
 
 # Attach routes
 app.include_router(city.router)
@@ -32,9 +36,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    from database import initialize_spatial_db
-    
-    # Force PostGIS & Schema initialization
-    initialize_spatial_db()
-    
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
