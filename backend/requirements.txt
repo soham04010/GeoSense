@@ -6,6 +6,11 @@ numpy
 scikit-learn
 reportlab
 geopandas
+shapely
+folium
 psycopg2-binary
 requests
 groq
+earthengine-api
+google-auth
+sqlalchemy
