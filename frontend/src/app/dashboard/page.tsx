@@ -373,7 +373,7 @@ function DashboardContent() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => {
+              onFocus={(e) => {
                 if (suggestions.length > 0) setShowDropdown(true);
                 // Select all text on focus for easy typing
                 e.target.select();
